@@ -9,6 +9,15 @@ const MOPS_SOURCE_URL = `${MOPS_BASE}/mops/web/t146sb05`;
 const MOPS_ESSENCE_AJAX_URL = `${MOPS_BASE}/mops/web/ajax_t146sb05`;
 const MOPS_MATERIAL_AJAX_URL = `${MOPS_BASE}/mops/web/ajax_t05st01`;
 
+const HTML_ENTITY_REPLACEMENTS: Readonly<Record<string, string>> = {
+  "&nbsp;": " ",
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+};
+
 interface AnnouncementReference {
   title: string;
   year: string;
@@ -160,12 +169,10 @@ function htmlToText(html: string): string {
   );
 }
 
+/** 將允許的 HTML entity 各解碼一次，避免巢狀內容被重複解碼。 */
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replaceAll("&nbsp;", " ")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'");
+  return value.replace(
+    /&(?:nbsp|amp|lt|gt|quot|#39);/g,
+    (entity) => HTML_ENTITY_REPLACEMENTS[entity] ?? entity,
+  );
 }

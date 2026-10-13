@@ -70,6 +70,22 @@ describe("MOPS issuance parsing", () => {
     expect(parseCapitalIncreaseReferences(html)).toEqual([]);
   });
 
+  it("每個 HTML entity 僅解碼一次", () => {
+    const html = `
+      <button onClick="document.fm1.month.value='07';
+        document.fm1.year.value='115';
+        document.fm1.seq_no.value='5';
+        document.fm1.spoke_time.value='171238';
+        document.fm1.spoke_date.value='20260731';
+        document.fm1.action='/mops/web/ajax_t05st01';">
+        董事會決議辦理&amp;lt;script&amp;gt;現金增資發行新股
+      </button>`;
+
+    expect(parseCapitalIncreaseReferences(html)[0]?.title).toBe(
+      "董事會決議辦理&lt;script&gt;現金增資發行新股",
+    );
+  });
+
   it("從重大訊息明細解析完整發行總股數", () => {
     expect(
       parseTotalNewShares(`
