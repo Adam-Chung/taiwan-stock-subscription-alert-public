@@ -6,6 +6,10 @@ import type {
 import { evaluateSubscriptionDateResult } from "../src/evaluation.js";
 import { buildFailureMessage } from "../src/message.js";
 import { loadRecipients, type LineRecipient } from "../src/recipients.js";
+import type {
+  JsonSnapshot,
+  JsonSnapshotStore,
+} from "../src/clients/http.js";
 
 interface WorkerEnvironment {
   ALERT_HISTORY: KVNamespace;
@@ -53,6 +57,7 @@ interface DailyDeliveryState {
 
 const DEFAULT_LATEST_SEND_TIME = "13:15";
 const HISTORY_TTL_SECONDS = 120 * 24 * 60 * 60;
+const SOURCE_SNAPSHOT_TTL_SECONDS = 10 * 24 * 60 * 60;
 
 const dependencies: WorkerDependencies = {
   evaluate: evaluateSubscriptionDateResult,
@@ -179,7 +184,38 @@ function evaluationOptions(env: WorkerEnvironment): EvaluationOptions {
     issuanceOverrides: parseIssuanceOverrides(env.ISSUANCE_OVERRIDES_JSON),
     externalFetchEnabled: env.ENABLE_EXTERNAL_FETCH === "true",
     mopsFetchEnabled: env.ENABLE_MOPS_FETCH === "true",
+    sourceSnapshots: sourceSnapshotStore(env.ALERT_HISTORY),
   };
+}
+
+/** 以既有 KV 儲存有限期官方 JSON 快照，鍵值不含 URL 或查詢參數。 */
+function sourceSnapshotStore(history: KVNamespace): JsonSnapshotStore {
+  return {
+    async load(key: string): Promise<JsonSnapshot | undefined> {
+      const raw = await history.get(sourceSnapshotKey(key));
+      if (raw === null) return undefined;
+      const parsed: unknown = JSON.parse(raw);
+      if (!isJsonSnapshot(parsed)) throw new Error("官方來源快取格式無效");
+      return parsed;
+    },
+    async save(key: string, snapshot: JsonSnapshot): Promise<void> {
+      await history.put(sourceSnapshotKey(key), JSON.stringify(snapshot), {
+        expirationTtl: SOURCE_SNAPSHOT_TTL_SECONDS,
+      });
+    },
+  };
+}
+
+/** 驗證官方來源快取只含時間與 JSON 內容。 */
+function isJsonSnapshot(value: unknown): value is JsonSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const snapshot = value as Record<string, unknown>;
+  return typeof snapshot.storedAt === "string" && typeof snapshot.body === "string";
+}
+
+/** 建立與傳送紀錄分離的官方資料快取鍵。 */
+function sourceSnapshotKey(key: string): string {
+  return `source-snapshot:${key}`;
 }
 
 /** 解析可選的完整增資股數備援 JSON。 */

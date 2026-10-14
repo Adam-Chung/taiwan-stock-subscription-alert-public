@@ -60,6 +60,14 @@ export function evaluateOffering(
 
   const safetyMarginPercent =
     scalePercent === undefined ? undefined : discountPercent - scalePercent;
+  const sourceWarnings = [
+    ...(quote.officialSnapshotAt
+      ? [`行情使用 ${formatSnapshotTime(quote.officialSnapshotAt)} 保存的官方快取`]
+      : []),
+    ...(capital?.officialSnapshotAt
+      ? [`公司資料使用 ${formatSnapshotTime(capital.officialSnapshotAt)} 保存的官方快取`]
+      : []),
+  ];
   const passesDiscount = strictlyGreater(
     discountPercent,
     policy.minDiscountPercent,
@@ -100,7 +108,24 @@ export function evaluateOffering(
     recommendationKind,
     recommended: recommendationKind !== "none",
     ...(warning ? { warning } : {}),
+    ...(sourceWarnings.length > 0 ? { sourceWarnings } : {}),
   };
+}
+
+/** 將官方快取時間轉為固定且不受執行環境語系影響的顯示格式。 */
+function formatSnapshotTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat("zh-TW", {
+        timeZone: "Asia/Taipei",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).format(date);
 }
 
 /** 以百分點容差執行嚴格大於，避免浮點誤差讓等於門檻的值入選。 */

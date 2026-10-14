@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchQuote } from "../src/clients/quotes.js";
 import type { SubscriptionOffering } from "../src/domain/types.js";
+import type { JsonSnapshotStore } from "../src/clients/http.js";
 
 const offering: SubscriptionOffering = {
   code: "7855",
@@ -16,6 +17,8 @@ const offering: SubscriptionOffering = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  delete process.env.HTTP_RETRY_BASE_MS;
 });
 
 describe("fetchQuote", () => {
@@ -45,7 +48,7 @@ describe("fetchQuote", () => {
     const quote = await fetchQuote(offering);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics",
     );
     expect(quote).toMatchObject({
@@ -72,6 +75,45 @@ describe("fetchQuote", () => {
     await expect(fetchQuote(offering)).rejects.toThrow(
       "上市即時行情與官方興櫃行情皆未取得",
     );
+  });
+
+  it("TPEx 暫時失敗時使用期限內官方快照並保留快照時間", async () => {
+    process.env.HTTP_RETRY_BASE_MS = "0";
+    const storedAt = new Date().toISOString();
+    const snapshotStore: JsonSnapshotStore = {
+      load: vi.fn().mockResolvedValue({
+        storedAt,
+        body: JSON.stringify([
+          {
+            Date: "1151013",
+            Time: "163006",
+            SecuritiesCompanyCode: "7855",
+            CompanyName: "和運租車",
+            PreviousAveragePrice: "83.82",
+            Average: "78.7",
+            LatestPrice: "78.7",
+          },
+        ]),
+      }),
+      save: vi.fn(),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(Response.json({ msgArray: [] }))
+        .mockResolvedValue(new Response("", { status: 503 })),
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(fetchQuote(offering, snapshotStore)).resolves.toMatchObject({
+      market: "emerging",
+      currentPrice: 78.7,
+      previousClose: 83.82,
+      officialSnapshotAt: storedAt,
+    });
+    expect(snapshotStore.load).toHaveBeenCalledWith("tpex-emerging-quotes");
   });
 
   it("創新板轉列上櫃先查轉列前仍可能存在的上市行情", async () => {

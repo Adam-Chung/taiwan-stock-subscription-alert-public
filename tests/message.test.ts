@@ -276,3 +276,40 @@ it("興櫃行情明確標示最近成交價與前一交易日平均價", () => {
   expect(message).toContain("前一交易日平均價：100.4 元");
   expect(message).toContain("較前日均價：-4.70 元（-4.68%）");
 });
+
+it("使用官方快取時在 LINE 明示資料時效", () => {
+  const item = {
+    offering: {
+      code: "2249",
+      name: "湧盛",
+      issueMarketLabel: "初上櫃",
+      subscriptionEndDate: "2026-10-14",
+      actualUnderwritingPrice: 66,
+      actualUnderwritingShares: 683_000,
+      totalUnderwritingAmount: 45_078_000,
+      allotmentDate: "2026-10-20",
+      cancelled: false,
+    },
+    quote: {
+      code: "2249",
+      name: "湧盛",
+      market: "emerging",
+      currentPrice: 100,
+      previousClose: 95,
+      previousPriceKind: "average",
+      quotedAt: "2026-10-13 16:30:06",
+      usedPreviousClose: false,
+      officialSnapshotAt: "2026-10-14T04:00:00.000Z",
+    },
+    discountPercent: 34,
+    recommendationKind: "price-only",
+    recommended: true,
+    warning: "缺少整次新增發行股數，無法計算股數稀釋率與安全邊際",
+    sourceWarnings: ["行情使用 2026/10/14 12:00 保存的官方快取"],
+  } satisfies Evaluation;
+
+  const message = buildSuccessMessage("2026-10-14", [item], []);
+  expect(message).toContain(
+    "資料時效：行情使用 2026/10/14 12:00 保存的官方快取",
+  );
+});

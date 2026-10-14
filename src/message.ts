@@ -91,6 +91,7 @@ export function buildSuccessMessage(
             : ""
         }`,
         ...(item.warning ? [`注意：${item.warning}`] : []),
+        ...(item.sourceWarnings ?? []).map((warning) => `資料時效：${warning}`),
         "",
         `公告資訊：https://goodinfo.tw/tw/StockAnnounceList.asp?STOCK_ID=${encodeURIComponent(
           item.offering.code,
@@ -114,6 +115,9 @@ export function buildSuccessMessage(
         `整次新增發行股數：${formatOptionalShares(item.issuance?.totalNewShares)}`,
         `發行後總股數：${formatPostIssueShares(item)}`,
         `股數稀釋率：${formatFailureDilution(item)}`,
+        ...(item.capital?.officialSnapshotAt
+          ? [`資料時效：公司資料使用前次保存的官方快取`]
+          : []),
         `原因：${item.reason}`,
         `公告資訊：https://goodinfo.tw/tw/StockAnnounceList.asp?STOCK_ID=${encodeURIComponent(
           item.offering.code,

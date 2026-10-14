@@ -21,12 +21,14 @@ export interface Quote {
   previousPriceKind?: "close" | "average";
   quotedAt: string;
   usedPreviousClose: boolean;
+  officialSnapshotAt?: string;
 }
 
 export interface CapitalInfo {
   code: string;
   issuedCommonShares: number;
   industryType?: string;
+  officialSnapshotAt?: string;
 }
 
 export interface IssuanceOverride {
@@ -50,6 +52,7 @@ export interface Evaluation {
   recommendationKind: "complete" | "consider" | "price-only" | "none";
   recommended: boolean;
   warning?: string;
+  sourceWarnings?: string[];
 }
 
 export interface EvaluationFailure {

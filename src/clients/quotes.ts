@@ -1,6 +1,10 @@
 import type { Market, Quote, SubscriptionOffering } from "../domain/types.js";
 import { compactRocDateToIso } from "../lib/date.js";
-import { fetchJson } from "./http.js";
+import {
+  fetchJson,
+  fetchJsonResult,
+  type JsonSnapshotStore,
+} from "./http.js";
 
 interface MisResponse {
   msgArray?: Array<Record<string, string>>;
@@ -18,16 +22,20 @@ interface TpexEmergingQuoteRow {
 
 const TPEX_EMERGING_QUOTES_URL =
   "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics";
+const TPEX_QUOTE_SNAPSHOT_MAX_AGE_MS = 36 * 60 * 60 * 1_000;
 
 /** 依案件市場依序查詢即時行情或政府開放資料中的興櫃最近行情。 */
-export async function fetchQuote(offering: SubscriptionOffering): Promise<Quote> {
+export async function fetchQuote(
+  offering: SubscriptionOffering,
+  snapshotStore?: JsonSnapshotStore,
+): Promise<Quote> {
   const markets = marketCandidates(offering.issueMarketLabel);
   const errors: string[] = [];
   for (const market of markets) {
     try {
       const quote =
         market === "emerging"
-          ? await fetchEmergingQuote(offering.code)
+          ? await fetchEmergingQuote(offering.code, snapshotStore)
           : await fetchMisQuote(offering.code, market);
       if (quote) return quote;
     } catch (error) {
@@ -72,8 +80,22 @@ async function fetchMisQuote(
 }
 
 /** 從具政府開放資料授權的櫃買中心 OpenAPI 取得興櫃最近交易行情。 */
-async function fetchEmergingQuote(code: string): Promise<Quote | undefined> {
-  const rows = await fetchJson<TpexEmergingQuoteRow[]>(TPEX_EMERGING_QUOTES_URL);
+async function fetchEmergingQuote(
+  code: string,
+  snapshotStore?: JsonSnapshotStore,
+): Promise<Quote | undefined> {
+  const result = await fetchJsonResult<TpexEmergingQuoteRow[]>(
+    TPEX_EMERGING_QUOTES_URL,
+    20_000,
+    snapshotStore
+      ? {
+          store: snapshotStore,
+          key: "tpex-emerging-quotes",
+          maxAgeMs: TPEX_QUOTE_SNAPSHOT_MAX_AGE_MS,
+        }
+      : undefined,
+  );
+  const rows = result.value;
   const item = rows.find((row) => row.SecuritiesCompanyCode.trim() === code);
   if (!item) return undefined;
 
@@ -99,6 +121,7 @@ async function fetchEmergingQuote(code: string): Promise<Quote | undefined> {
     quotedAt: `${compactRocDateToIso(item.Date)} ${formatCompactTime(item.Time)}`,
     usedPreviousClose:
       !Number.isFinite(latestPrice) && !Number.isFinite(dailyAverage),
+    ...(result.snapshotAt ? { officialSnapshotAt: result.snapshotAt } : {}),
   };
 }
 

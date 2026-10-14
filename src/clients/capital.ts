@@ -1,11 +1,17 @@
 import type { CapitalInfo } from "../domain/types.js";
-import { fetchJson } from "./http.js";
+import { fetchJsonResult, type JsonSnapshotStore } from "./http.js";
 
 type CompanyRow = Record<string, string>;
 
 interface CapitalEndpoint {
   label: string;
   url: string;
+}
+
+interface CompanyRowsResult {
+  rows: CompanyRow[];
+  snapshotAt?: string;
+  cacheExpiresAtMs: number;
 }
 
 const ENDPOINTS = {
@@ -54,26 +60,34 @@ const INDUSTRY_NAMES: Readonly<Record<string, string>> = {
   "38": "居家生活",
 };
 
-const companyRowsByEndpoint = new Map<string, CompanyRow[]>();
+const companyRowsByEndpoint = new Map<string, CompanyRowsResult>();
+const COMPANY_SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+const COMPANY_MEMORY_CACHE_MS = 60 * 60 * 1_000;
 
 /** 從上市、上櫃、公開發行及興櫃公司開放資料取得已發行普通股數與產業類型。 */
 export async function fetchCapitalInfo(
   code: string,
   issueMarketLabel?: string,
+  snapshotStore?: JsonSnapshotStore,
 ): Promise<CapitalInfo> {
   const endpoints = capitalEndpoints(issueMarketLabel);
   const settled = await Promise.allSettled(
-    endpoints.map((endpoint) => fetchCompanyRows(endpoint.url)),
+    endpoints.map((endpoint) => fetchCompanyRows(endpoint.url, snapshotStore)),
   );
   const companyRows = settled.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
+    result.status === "fulfilled"
+      ? result.value.rows.map((row) => ({
+          row,
+          snapshotAt: result.value.snapshotAt,
+        }))
+      : [],
   );
 
-  const row = companyRows.find(
+  const matched = companyRows.find(
     (item) =>
-      (item["公司代號"] ?? item.SecuritiesCompanyCode)?.trim() === code,
+      (item.row["公司代號"] ?? item.row.SecuritiesCompanyCode)?.trim() === code,
   );
-  if (!row) {
+  if (!matched) {
     const failedSources = settled.flatMap((result, index) =>
       result.status === "rejected"
         ? [`${endpoints[index]?.label ?? "公司資料"}：${safeFailureReason(result.reason)}`]
@@ -87,6 +101,7 @@ export async function fetchCapitalInfo(
       }`,
     );
   }
+  const row = matched.row;
   const issuedCommonShares = Number(
     (
       row["已發行普通股數或TDR原股發行股數"] ??
@@ -104,6 +119,7 @@ export async function fetchCapitalInfo(
     code,
     issuedCommonShares,
     ...(industryType ? { industryType } : {}),
+    ...(matched.snapshotAt ? { officialSnapshotAt: matched.snapshotAt } : {}),
   };
 }
 
@@ -148,13 +164,41 @@ function safeFailureReason(reason: unknown): string {
   return httpStatus ?? (reason instanceof Error ? reason.name : "UnknownError");
 }
 
-/** 只快取成功取得的公司資料；暫時失敗不留存，讓後續股票可重新嘗試。 */
-async function fetchCompanyRows(endpoint: string): Promise<CompanyRow[]> {
+/** 快取成功或有效快照的公司資料，並以期限避免 Worker isolate 長期沿用舊值。 */
+async function fetchCompanyRows(
+  endpoint: string,
+  snapshotStore?: JsonSnapshotStore,
+): Promise<CompanyRowsResult> {
   const cached = companyRowsByEndpoint.get(endpoint);
-  if (cached) return cached;
-  const rows = await fetchJson<CompanyRow[]>(endpoint, 30_000);
+  if (cached && cached.cacheExpiresAtMs > Date.now()) return cached;
+  if (cached) companyRowsByEndpoint.delete(endpoint);
+  const result = await fetchJsonResult<CompanyRow[]>(
+    endpoint,
+    30_000,
+    snapshotStore
+      ? {
+          store: snapshotStore,
+          key: companySnapshotKey(endpoint),
+          maxAgeMs: COMPANY_SNAPSHOT_MAX_AGE_MS,
+        }
+      : undefined,
+  );
+  const rows = {
+    rows: result.value,
+    ...(result.snapshotAt ? { snapshotAt: result.snapshotAt } : {}),
+    cacheExpiresAtMs: result.snapshotAt
+      ? Date.parse(result.snapshotAt) + COMPANY_SNAPSHOT_MAX_AGE_MS
+      : Date.now() + COMPANY_MEMORY_CACHE_MS,
+  };
   companyRowsByEndpoint.set(endpoint, rows);
   return rows;
+}
+
+/** 以固定名稱區分官方公司資料集，避免將完整 URL 或查詢參數寫入 KV。 */
+function companySnapshotKey(endpoint: string): string {
+  const entry = Object.entries(ENDPOINTS).find(([, url]) => url === endpoint);
+  if (!entry) throw new Error("未知的公司資料快取來源");
+  return `company-${entry[0]}`;
 }
 
 /** 將官方產業代碼轉為可讀名稱；未知代碼仍保留原始值，避免隱藏已取得的資料。 */

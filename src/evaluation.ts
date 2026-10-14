@@ -9,12 +9,14 @@ import type {
   IssuanceOverride,
 } from "./domain/types.js";
 import { buildSuccessMessage } from "./message.js";
+import type { JsonSnapshotStore } from "./clients/http.js";
 
 export interface EvaluationOptions {
   policy: EvaluationPolicy;
   issuanceOverrides: Record<string, IssuanceOverride>;
   externalFetchEnabled: boolean;
   mopsFetchEnabled: boolean;
+  sourceSnapshots?: JsonSnapshotStore;
 }
 
 export interface EvaluationResult {
@@ -49,8 +51,12 @@ export async function evaluateSubscriptionDateResult(
     const override = options.issuanceOverrides[offering.code];
     const [quoteResult, capitalResult, issuanceResult] =
       await Promise.allSettled([
-        fetchQuote(offering),
-        fetchCapitalInfo(offering.code, offering.issueMarketLabel),
+        fetchQuote(offering, options.sourceSnapshots),
+        fetchCapitalInfo(
+          offering.code,
+          offering.issueMarketLabel,
+          options.sourceSnapshots,
+        ),
         override
           ? Promise.resolve(override)
           : options.mopsFetchEnabled

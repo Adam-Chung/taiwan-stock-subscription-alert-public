@@ -3,6 +3,9 @@ import { fetchCapitalInfo } from "../src/clients/capital.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  delete process.env.HTTP_MIN_INTERVAL_MS;
+  delete process.env.HTTP_RETRY_BASE_MS;
 });
 
 it("依案件市場取得上櫃與興櫃公司基本資料", async () => {
@@ -47,11 +50,13 @@ it("依案件市場取得上櫃與興櫃公司基本資料", async () => {
 });
 
 it("公司資料來源暫時失敗時不快取缺漏，下一檔可重新取得", async () => {
+  process.env.HTTP_MIN_INTERVAL_MS = "500";
+  process.env.HTTP_RETRY_BASE_MS = "0";
   vi.resetModules();
   const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
     const url = String(input);
     if (!url.includes("mopsfin_t187ap03_O")) return Response.json([]);
-    if (fetchMock.mock.calls.length <= 2) {
+    if (fetchMock.mock.calls.length <= 3) {
       return new Response("", { status: 503 });
     }
     return Response.json([
@@ -78,6 +83,6 @@ it("公司資料來源暫時失敗時不快取缺漏，下一檔可重新取得"
     issuedCommonShares: 186_606_250,
     industryType: "其他（20）",
   });
-  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(fetchMock).toHaveBeenCalledTimes(4);
   warning.mockRestore();
 });
