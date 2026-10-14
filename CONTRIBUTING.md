@@ -1,6 +1,6 @@
 # Contributing
 
-感謝你協助改善這個 Public mirror。
+感謝你協助改善台股申購提醒。
 
 ## 目前接受的回饋
 
@@ -13,8 +13,7 @@
 請以 Issue 描述問題與建議，不要貼上受著作權保護的完整第三方內容、正式訊息、
 token、userId、雜湊、內部 URL 或 production log。
 
-Public Repository 是單向衍生輸出。經確認的修正會由維護者手動實作或移植到
-Private source-of-truth，完成完整驗證後再重新發布；Public 內容不會自動流入 Private。
+維護者會評估 Issue 內容，並在完成程式碼審查、測試與安全檢查後安排修正。
 
 ## 本機檢查
 

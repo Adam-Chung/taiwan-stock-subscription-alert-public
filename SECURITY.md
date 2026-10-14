@@ -2,12 +2,12 @@
 
 ## 支援範圍
 
-目前只支援 `main` 最新版本。Public mirror 不含正式憑證、收件者、執行紀錄、
-Cloudflare KV 識別碼或 production deployment 設定。
+目前只支援 `main` 最新版本。Repository 不應包含正式憑證、收件者資料、執行紀錄、
+Cloudflare KV 識別碼或帳號專屬的部署設定。
 
 ## 回報漏洞
 
-請使用 GitHub 的 **Private vulnerability reporting** 私下回報。請勿在 Issue、Pull
+請使用 GitHub 的私密漏洞回報功能私下回報。請勿在 Issue、Pull
 Request、Discussion、截圖或日誌中公開 token、LINE userId、Cloudflare 資訊、個人
 資料或可被用來重現對正式環境攻擊的細節。
 
