@@ -208,6 +208,33 @@ it("一般 JSON 來源三次暫時錯誤後才使用期限內官方快照", asyn
   expect(snapshotStore.load).toHaveBeenCalledWith("test-data");
 });
 
+it("官方 JSON 成功但 KV 寫入失敗時仍回傳即時資料", async () => {
+  const snapshotStore: JsonSnapshotStore = {
+    load: vi.fn(),
+    save: vi.fn().mockRejectedValue(new Error("KV unavailable")),
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: "live" })),
+  );
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+  await expect(
+    fetchJsonResult("https://www.tpex.org.tw/openapi/v1/data", 20_000, {
+      store: snapshotStore,
+      key: "test-data",
+      maxAgeMs: 60_000,
+    }),
+  ).resolves.toEqual({ value: { ok: "live" } });
+  expect(snapshotStore.load).not.toHaveBeenCalled();
+  expect(warning).toHaveBeenCalledWith(
+    JSON.stringify({
+      event: "official_source_cache_write_failed",
+      reason: "Error",
+    }),
+  );
+});
+
 it("官方 JSON 回傳 HTML 時重試後拒絕解析內容", async () => {
   process.env.HTTP_RETRY_BASE_MS = "0";
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(

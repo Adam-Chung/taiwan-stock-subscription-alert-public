@@ -42,10 +42,17 @@ vi.mock("../src/clients/mops-issuance.js", () => ({
     .mockRejectedValue(new Error("HTTP 503：https://example.test/path?token=private")),
 }));
 
-import { evaluateSubscriptionDateResult } from "../src/evaluation.js";
+import {
+  evaluateSubscriptionDateResult,
+  warmSubscriptionDateSources,
+} from "../src/evaluation.js";
+import { fetchCapitalInfo } from "../src/clients/capital.js";
+import { fetchMopsIssuance } from "../src/clients/mops-issuance.js";
+import { fetchQuote } from "../src/clients/quotes.js";
 import { fetchEndingOfferings } from "../src/clients/subscriptions.js";
 
 afterEach(() => {
+  vi.clearAllMocks();
   vi.restoreAllMocks();
 });
 
@@ -85,4 +92,29 @@ it("新增股數失敗時保留原股數並記錄安全化來源錯誤", async (
     }),
   );
   expect(errorLog.mock.calls.flat().join(" ")).not.toContain("private");
+});
+
+it("預熱只取得行情與公司資料，不查 MOPS 或產生訊息", async () => {
+  const sourceSnapshots = {
+    load: vi.fn(),
+    save: vi.fn(),
+  };
+
+  await expect(
+    warmSubscriptionDateSources("2026-08-31", {
+      externalFetchEnabled: true,
+      sourceSnapshots,
+    }),
+  ).resolves.toEqual({
+    offeringCount: 1,
+    completeOfferingCount: 1,
+    sourceFailureCount: 0,
+  });
+  expect(fetchQuote).toHaveBeenCalledWith(expect.any(Object), sourceSnapshots);
+  expect(fetchCapitalInfo).toHaveBeenCalledWith(
+    "6967",
+    "上櫃增資",
+    sourceSnapshots,
+  );
+  expect(fetchMopsIssuance).not.toHaveBeenCalled();
 });

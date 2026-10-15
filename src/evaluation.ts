@@ -25,6 +25,12 @@ export interface EvaluationResult {
   incompleteCount: number;
 }
 
+export interface SourceWarmupResult {
+  offeringCount: number;
+  completeOfferingCount: number;
+  sourceFailureCount: number;
+}
+
 /** 使用共用官方資料來源評估指定日期的所有申購案件。 */
 export async function evaluateSubscriptionDate(
   date: string,
@@ -111,6 +117,46 @@ export async function evaluateSubscriptionDateResult(
     message: buildSuccessMessage(date, evaluated, failures),
     complete: incompleteCount === 0,
     incompleteCount,
+  };
+}
+
+/** 預先載入今日行情與公司資料快照；不查 MOPS、不發 LINE，也不寫發送紀錄。 */
+export async function warmSubscriptionDateSources(
+  date: string,
+  options: Pick<EvaluationOptions, "externalFetchEnabled" | "sourceSnapshots">,
+): Promise<SourceWarmupResult> {
+  if (!options.externalFetchEnabled) {
+    throw new Error(
+      "外部資料來源預設停用；請先確認各來源條款與授權，再設定 ENABLE_EXTERNAL_FETCH=true",
+    );
+  }
+  const offerings = await fetchEndingOfferings(date);
+  let completeOfferingCount = 0;
+  let sourceFailureCount = 0;
+
+  for (const offering of offerings) {
+    const [quoteResult, capitalResult] = await Promise.allSettled([
+      fetchQuote(offering, options.sourceSnapshots),
+      fetchCapitalInfo(
+        offering.code,
+        offering.issueMarketLabel,
+        options.sourceSnapshots,
+      ),
+    ]);
+    logRejectedSource(date, offering.code, "quote", quoteResult);
+    logRejectedSource(date, offering.code, "capital", capitalResult);
+
+    const failures = [quoteResult, capitalResult].filter(
+      (result) => result.status === "rejected",
+    ).length;
+    sourceFailureCount += failures;
+    if (failures === 0) completeOfferingCount += 1;
+  }
+
+  return {
+    offeringCount: offerings.length,
+    completeOfferingCount,
+    sourceFailureCount,
   };
 }
 

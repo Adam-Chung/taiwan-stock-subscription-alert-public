@@ -23,6 +23,7 @@ interface TpexEmergingQuoteRow {
 const TPEX_EMERGING_QUOTES_URL =
   "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics";
 const TPEX_QUOTE_SNAPSHOT_MAX_AGE_MS = 36 * 60 * 60 * 1_000;
+const MIS_QUOTE_SNAPSHOT_MAX_AGE_MS = 2 * 60 * 60 * 1_000;
 
 /** 依案件市場依序查詢即時行情或政府開放資料中的興櫃最近行情。 */
 export async function fetchQuote(
@@ -36,7 +37,7 @@ export async function fetchQuote(
       const quote =
         market === "emerging"
           ? await fetchEmergingQuote(offering.code, snapshotStore)
-          : await fetchMisQuote(offering.code, market);
+          : await fetchMisQuote(offering.code, market, snapshotStore);
       if (quote) return quote;
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
@@ -53,13 +54,24 @@ export async function fetchQuote(
 async function fetchMisQuote(
   code: string,
   market: Exclude<Market, "emerging">,
+  snapshotStore?: JsonSnapshotStore,
 ): Promise<Quote | undefined> {
   const exchange = market;
   const url =
     `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?` +
     `ex_ch=${exchange}_${encodeURIComponent(code)}.tw&json=1&delay=0`;
-  const response = await fetchJson<MisResponse>(url);
-  const item = response.msgArray?.[0];
+  const result = await fetchJsonResult<MisResponse>(
+    url,
+    20_000,
+    snapshotStore
+      ? {
+          store: snapshotStore,
+          key: `mis-${market}-${code}`,
+          maxAgeMs: MIS_QUOTE_SNAPSHOT_MAX_AGE_MS,
+        }
+      : undefined,
+  );
+  const item = result.value.msgArray?.[0];
   if (!item?.c) return undefined;
 
   const previousClose = parsePrice(item.y);
@@ -76,6 +88,7 @@ async function fetchMisQuote(
     previousPriceKind: "close",
     quotedAt: `${item.d ?? ""} ${item.t ?? ""}`.trim(),
     usedPreviousClose: !Number.isFinite(tradedPrice),
+    ...(result.snapshotAt ? { officialSnapshotAt: result.snapshotAt } : {}),
   };
 }
 
@@ -127,6 +140,15 @@ async function fetchEmergingQuote(
 
 /** 依申購案件類型決定可接受的行情市場順序。 */
 function marketCandidates(label: string): Market[] {
+  if (
+    label === "初上市" ||
+    label === "初上櫃" ||
+    label === "創新板初上市" ||
+    label === "第一上市公司初上市" ||
+    label === "第一上櫃公司初上櫃"
+  ) {
+    return ["emerging"];
+  }
   if (label === "創新板轉列上櫃") return ["tse", "otc", "emerging"];
   if (label.includes("上櫃")) return ["otc", "emerging"];
   if (label.includes("上市") || label.includes("創新板")) return ["tse", "emerging"];

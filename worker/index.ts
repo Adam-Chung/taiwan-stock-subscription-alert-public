@@ -2,8 +2,12 @@ import { pushLineMessageToRecipientsWithToken } from "../src/clients/line.js";
 import type {
   EvaluationOptions,
   EvaluationResult,
+  SourceWarmupResult,
 } from "../src/evaluation.js";
-import { evaluateSubscriptionDateResult } from "../src/evaluation.js";
+import {
+  evaluateSubscriptionDateResult,
+  warmSubscriptionDateSources,
+} from "../src/evaluation.js";
 import { buildFailureMessage } from "../src/message.js";
 import { loadRecipients, type LineRecipient } from "../src/recipients.js";
 import type {
@@ -37,12 +41,21 @@ interface WorkerDependencies {
     recipients: LineRecipient[],
     token: string,
   ) => ReturnType<typeof pushLineMessageToRecipientsWithToken>;
+  warm: (
+    date: string,
+    options: Pick<EvaluationOptions, "externalFetchEnabled" | "sourceSnapshots">,
+  ) => Promise<SourceWarmupResult>;
 }
 
 export interface WorkerRunResult {
   status: "sent" | "updated" | "duplicate" | "unchanged";
   date: string;
   sentCount: number;
+}
+
+export interface WorkerWarmupResult extends SourceWarmupResult {
+  status: "warmed";
+  date: string;
 }
 
 interface DailyDeliveryState {
@@ -56,22 +69,24 @@ interface DailyDeliveryState {
 }
 
 const DEFAULT_LATEST_SEND_TIME = "13:15";
+const SNAPSHOT_WARMUP_CRON = "0 4 * * MON-FRI";
 const HISTORY_TTL_SECONDS = 120 * 24 * 60 * 60;
 const SOURCE_SNAPSHOT_TTL_SECONDS = 10 * 24 * 60 * 60;
 
 const dependencies: WorkerDependencies = {
   evaluate: evaluateSubscriptionDateResult,
   deliver: pushLineMessageToRecipientsWithToken,
+  warm: warmSubscriptionDateSources,
 };
 
 export default {
-  /** 由 Cloudflare Cron 直接執行評估與 LINE 發送，不經 GitHub Actions。 */
+  /** 由 Cloudflare Cron 先預熱快照，再於正式時段評估與發送 LINE。 */
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: WorkerEnvironment,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    const result = await executeScheduledAlert(new Date(), env);
+    const result = await executeWorkerSchedule(controller.cron, new Date(), env);
     console.log(JSON.stringify(result));
   },
 
@@ -80,6 +95,32 @@ export default {
     return Response.json({ service: "taiwan-stock-subscription-alert", ok: true });
   },
 } satisfies ExportedHandler<WorkerEnvironment>;
+
+/** 依 Cron 類型區分只讀預熱與正式通知，避免預熱時載入收件者或發送 LINE。 */
+export async function executeWorkerSchedule(
+  cron: string,
+  now: Date,
+  env: WorkerEnvironment,
+  workerDependencies: WorkerDependencies = dependencies,
+): Promise<WorkerRunResult | WorkerWarmupResult> {
+  return cron === SNAPSHOT_WARMUP_CRON
+    ? executeSnapshotWarmup(now, env, workerDependencies)
+    : executeScheduledAlert(now, env, workerDependencies);
+}
+
+/** 預先建立今日行情與公司資料快照，不產生任何通知或發送紀錄。 */
+export async function executeSnapshotWarmup(
+  now: Date,
+  env: WorkerEnvironment,
+  workerDependencies: WorkerDependencies = dependencies,
+): Promise<WorkerWarmupResult> {
+  const taipei = taipeiDateTime(now);
+  const result = await workerDependencies.warm(taipei.date, {
+    externalFetchEnabled: env.ENABLE_EXTERNAL_FETCH === "true",
+    sourceSnapshots: sourceSnapshotStore(env.ALERT_HISTORY),
+  });
+  return { status: "warmed", date: taipei.date, ...result };
+}
 
 /** 執行一次具期限與重複防護的 Cloudflare 排程提醒。 */
 export async function executeScheduledAlert(

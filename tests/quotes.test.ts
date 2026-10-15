@@ -22,33 +22,28 @@ afterEach(() => {
 });
 
 describe("fetchQuote", () => {
-  it("初上市案件在 MIS 無資料時改用具開放授權的興櫃 OpenAPI", async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ msgArray: [{ c: "", z: "-" }] })),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify([
-            {
-              Date: "1150731",
-              Time: "163004",
-              SecuritiesCompanyCode: "7855",
-              CompanyName: "和運租車",
-              PreviousAveragePrice: "100.4",
-              Average: "96.27",
-              LatestPrice: "95.7",
-            },
-          ]),
-        ),
-      );
+  it("初上市案件直接使用具開放授權的興櫃 OpenAPI", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            Date: "1150731",
+            Time: "163004",
+            SecuritiesCompanyCode: "7855",
+            CompanyName: "和運租車",
+            PreviousAveragePrice: "100.4",
+            Average: "96.27",
+            LatestPrice: "95.7",
+          },
+        ]),
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const quote = await fetchQuote(offering);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "https://www.tpex.org.tw/openapi/v1/tpex_esb_latest_statistics",
     );
     expect(quote).toMatchObject({
@@ -61,15 +56,38 @@ describe("fetchQuote", () => {
     });
   });
 
+  it("初上櫃案件不查尚未掛牌的 MIS", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json([
+        {
+          Date: "1151014",
+          Time: "163004",
+          SecuritiesCompanyCode: "6898",
+          CompanyName: "程曦資訊",
+          PreviousAveragePrice: "79.59",
+          Average: "75.5",
+          LatestPrice: "75.5",
+        },
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      fetchQuote({
+        ...offering,
+        code: "6898",
+        name: "程曦資訊",
+        issueMarketLabel: "初上櫃",
+      }),
+    ).resolves.toMatchObject({ market: "emerging", currentPrice: 75.5 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain("mis.twse.com.tw");
+  });
+
   it("所有官方行情來源皆無資料時回傳可理解的缺漏原因", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ msgArray: [{ c: "", z: "-" }] })),
-        )
-        .mockResolvedValueOnce(new Response(JSON.stringify([]))),
+      vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify([]))),
     );
 
     await expect(fetchQuote(offering)).rejects.toThrow(
@@ -99,10 +117,7 @@ describe("fetchQuote", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValueOnce(Response.json({ msgArray: [] }))
-        .mockResolvedValue(new Response("", { status: 503 })),
+      vi.fn<typeof fetch>().mockResolvedValue(new Response("", { status: 503 })),
     );
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -114,6 +129,46 @@ describe("fetchQuote", () => {
       officialSnapshotAt: storedAt,
     });
     expect(snapshotStore.load).toHaveBeenCalledWith("tpex-emerging-quotes");
+  });
+
+  it("已上櫃案件將 MIS 行情保存為兩小時內可用的官方快照", async () => {
+    const snapshotStore: JsonSnapshotStore = {
+      load: vi.fn(),
+      save: vi.fn(),
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json({
+          msgArray: [
+            {
+              c: "6967",
+              n: "汎瑋材料",
+              z: "73.5",
+              y: "72",
+              d: "20261015",
+              t: "120000",
+            },
+          ],
+        }),
+      ),
+    );
+
+    await expect(
+      fetchQuote(
+        {
+          ...offering,
+          code: "6967",
+          name: "汎瑋材料",
+          issueMarketLabel: "上櫃增資",
+        },
+        snapshotStore,
+      ),
+    ).resolves.toMatchObject({ market: "otc", currentPrice: 73.5 });
+    expect(snapshotStore.save).toHaveBeenCalledWith(
+      "mis-otc-6967",
+      expect.objectContaining({ storedAt: expect.any(String) }),
+    );
   });
 
   it("創新板轉列上櫃先查轉列前仍可能存在的上市行情", async () => {

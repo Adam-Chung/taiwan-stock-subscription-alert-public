@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { executeScheduledAlert } from "../worker/index.js";
+import {
+  executeScheduledAlert,
+  executeWorkerSchedule,
+} from "../worker/index.js";
 
 class FakeKv {
   readonly values = new Map<string, string>();
@@ -48,10 +51,37 @@ function dependencies() {
         status: "sent" as const,
       })),
     ),
+    warm: vi.fn().mockResolvedValue({
+      offeringCount: 2,
+      completeOfferingCount: 2,
+      sourceFailureCount: 0,
+    }),
   };
 }
 
 describe("Cloudflare scheduled alert", () => {
+  it("12:00 只預熱快照，不評估或發送 LINE", async () => {
+    const workerDependencies = dependencies();
+
+    await expect(
+      executeWorkerSchedule(
+        "0 4 * * MON-FRI",
+        new Date("2026-08-31T04:00:00Z"),
+        environment(new FakeKv()),
+        workerDependencies,
+      ),
+    ).resolves.toEqual({
+      status: "warmed",
+      date: "2026-08-31",
+      offeringCount: 2,
+      completeOfferingCount: 2,
+      sourceFailureCount: 0,
+    });
+    expect(workerDependencies.warm).toHaveBeenCalledOnce();
+    expect(workerDependencies.evaluate).not.toHaveBeenCalled();
+    expect(workerDependencies.deliver).not.toHaveBeenCalled();
+  });
+
   it("12:30 主排程成功後寫入 KV，13:00 備援不重複發送", async () => {
     const history = new FakeKv();
     const workerDependencies = dependencies();
