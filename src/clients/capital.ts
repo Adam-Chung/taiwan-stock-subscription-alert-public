@@ -1,5 +1,6 @@
 import type { CapitalInfo } from "../domain/types.js";
 import { fetchJsonResult, type JsonSnapshotStore } from "./http.js";
+import { postFormText } from "./http.js";
 
 type CompanyRow = Record<string, string>;
 
@@ -20,6 +21,9 @@ const ENDPOINTS = {
   publicIssuer: "https://openapi.twse.com.tw/v1/opendata/t187ap03_P",
   emerging: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_R",
 } as const;
+
+const MOPS_COMPANY_DETAIL_URL =
+  "https://mopsov.twse.com.tw/mops/web/ajax_t05st03";
 
 const INDUSTRY_NAMES: Readonly<Record<string, string>> = {
   "01": "水泥工業",
@@ -87,21 +91,38 @@ export async function fetchCapitalInfo(
     (item) =>
       (item.row["公司代號"] ?? item.row.SecuritiesCompanyCode)?.trim() === code,
   );
-  if (!matched) {
-    const failedSources = settled.flatMap((result, index) =>
-      result.status === "rejected"
-        ? [`${endpoints[index]?.label ?? "公司資料"}：${safeFailureReason(result.reason)}`]
-        : [],
-    );
-    throw new Error(
-      `找不到 ${code} 的公司基本資料${
-        failedSources.length > 0
-          ? `（${failedSources.join("；")}）`
-          : ""
-      }`,
-    );
+  const failedSources = settled.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [`${endpoints[index]?.label ?? "公司資料"}：${safeFailureReason(result.reason)}`]
+      : [],
+  );
+  if (matched) {
+    try {
+      return capitalInfoFromCompanyRow(code, matched.row, matched.snapshotAt);
+    } catch (error) {
+      failedSources.push(`公司資料：${safeFailureReason(error)}`);
+    }
   }
-  const row = matched.row;
+
+  try {
+    return await fetchMopsCapitalInfo(code);
+  } catch (error) {
+    failedSources.push(`MOPS 公司詳細資料：${safeFailureReason(error)}`);
+  }
+
+  throw new Error(
+    `找不到 ${code} 的公司基本資料${
+      failedSources.length > 0 ? `（${failedSources.join("；")}）` : ""
+    }`,
+  );
+}
+
+/** 將官方公司資料列轉為股本資訊，無效股數由上層改查 MOPS 詳細資料。 */
+function capitalInfoFromCompanyRow(
+  code: string,
+  row: CompanyRow,
+  snapshotAt: string | undefined,
+): CapitalInfo {
   const issuedCommonShares = Number(
     (
       row["已發行普通股數或TDR原股發行股數"] ??
@@ -119,7 +140,46 @@ export async function fetchCapitalInfo(
     code,
     issuedCommonShares,
     ...(industryType ? { industryType } : {}),
-    ...(matched.snapshotAt ? { officialSnapshotAt: matched.snapshotAt } : {}),
+    ...(snapshotAt ? { officialSnapshotAt: snapshotAt } : {}),
+  };
+}
+
+/** 從 MOPS 公司詳細資料取得已發行普通股數與產業，作為 TPEx 暫時失敗的官方備援。 */
+async function fetchMopsCapitalInfo(code: string): Promise<CapitalInfo> {
+  const html = await postFormText(MOPS_COMPANY_DETAIL_URL, {
+    step: "1",
+    firstin: "1",
+    TYPEK: "all",
+    co_id: code,
+  });
+  return parseMopsCapitalInfo(code, html);
+}
+
+/** 解析 MOPS 公司詳細資料，並拒絕股票代號不符或缺少有效股數的頁面。 */
+export function parseMopsCapitalInfo(code: string, html: string): CapitalInfo {
+  const text = mopsHtmlToText(html);
+  const returnedCode = text.match(/股票代號\s*([0-9A-Za-z]+)/)?.[1];
+  if (returnedCode !== code) throw new Error("MOPS 公司代號不符");
+
+  const issuedCommonShares = Number(
+    (
+      text.match(
+        /已發行普通股數或\s*TDR原股發行股數\s*([\d,]+)\s*股/,
+      )?.[1] ?? ""
+    ).replaceAll(",", ""),
+  );
+  if (!Number.isSafeInteger(issuedCommonShares) || issuedCommonShares <= 0) {
+    throw new Error(`${code} MOPS 已發行普通股數無效`);
+  }
+
+  const industryName = text
+    .match(/產業類別\s*(.*?)\s*外國企業註冊地國/)?.[1]
+    ?.trim();
+  const industryType = formatIndustryName(industryName);
+  return {
+    code,
+    issuedCommonShares,
+    ...(industryType ? { industryType } : {}),
   };
 }
 
@@ -207,4 +267,25 @@ function formatIndustryType(value: string | undefined): string | undefined {
   if (!code) return undefined;
   const name = INDUSTRY_NAMES[code];
   return name ? `${name}（${code}）` : `產業代碼 ${code}`;
+}
+
+/** 將 MOPS 產業名稱補上既有產業代碼；未知名稱仍原樣保留。 */
+function formatIndustryName(value: string | undefined): string | undefined {
+  const name = value?.trim();
+  if (!name) return undefined;
+  const matched = Object.entries(INDUSTRY_NAMES).find(
+    ([, industryName]) => industryName === name,
+  );
+  return matched ? `${name}（${matched[0]}）` : name;
+}
+
+/** 將 MOPS HTML 轉成只供欄位解析的單行文字。 */
+function mopsHtmlToText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ")
+    .trim();
 }

@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   executeScheduledAlert,
   executeWorkerSchedule,
+  handleWorkerRequest,
 } from "../worker/index.js";
 
 class FakeKv {
@@ -34,7 +35,26 @@ function environment(history: FakeKv) {
     MIN_SAFETY_MARGIN_PERCENT: "10",
     ENABLE_EXTERNAL_FETCH: "true",
     ENABLE_MOPS_FETCH: "true",
+    ENABLE_FUGLE_FETCH: "true",
+    FUGLE_API_KEY: "test-fugle-key",
+    SNAPSHOT_INGEST_SECRET: "test-snapshot-secret",
   } as never;
+}
+
+/** 建立具有有效 HMAC 的官方快照匯入請求。 */
+function snapshotRequest(body: string, secret = "test-snapshot-secret"): Request {
+  const timestamp = String(Math.floor(Date.now() / 1_000));
+  return new Request("https://worker.example/internal/source-snapshots", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-snapshot-timestamp": timestamp,
+      "x-snapshot-signature": createHmac("sha256", secret)
+        .update(`${timestamp}.${body}`)
+        .digest("hex"),
+    },
+    body,
+  });
 }
 
 /** 建立不呼叫外部網路的 Worker 相依項目。 */
@@ -257,6 +277,70 @@ describe("Cloudflare scheduled alert", () => {
     ).rejects.toThrow("執行異常");
     expect(workerDependencies.deliver).toHaveBeenCalledOnce();
     expect(workerDependencies.deliver.mock.calls[0]?.[0]).toContain("來源失敗");
+    expect(history.values.size).toBe(0);
+  });
+});
+
+describe("Cloudflare source snapshot ingestion", () => {
+  it("有效 HMAC 只能寫入允許的兩個官方資料鍵", async () => {
+    const history = new FakeKv();
+    const storedAt = new Date().toISOString();
+    const body = JSON.stringify({
+      snapshots: [
+        {
+          key: "tpex-emerging-quotes",
+          storedAt,
+          body: JSON.stringify([
+            { SecuritiesCompanyCode: "7710", LatestPrice: "189" },
+          ]),
+        },
+        {
+          key: "company-emerging",
+          storedAt,
+          body: JSON.stringify([
+            { SecuritiesCompanyCode: "7710", IssueShares: "63905580" },
+          ]),
+        },
+      ],
+    });
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const response = await handleWorkerRequest(
+      snapshotRequest(body),
+      environment(history),
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ accepted: true, savedCount: 2 });
+    expect(history.values.has("source-snapshot:tpex-emerging-quotes")).toBe(true);
+    expect(history.values.has("source-snapshot:company-emerging")).toBe(true);
+  });
+
+  it("錯誤簽章與未允許資料鍵都不寫入 KV", async () => {
+    const history = new FakeKv();
+    const storedAt = new Date().toISOString();
+    const body = JSON.stringify({
+      snapshots: [
+        {
+          key: "arbitrary-url",
+          storedAt,
+          body: JSON.stringify([{ value: "unsafe" }]),
+        },
+      ],
+    });
+
+    const invalidSignature = await handleWorkerRequest(
+      snapshotRequest(body, "wrong-secret"),
+      environment(history),
+    );
+    expect(invalidSignature.status).toBe(403);
+    expect(history.values.size).toBe(0);
+
+    const invalidPayload = await handleWorkerRequest(
+      snapshotRequest(body),
+      environment(history),
+    );
+    expect(invalidPayload.status).toBe(400);
     expect(history.values.size).toBe(0);
   });
 });

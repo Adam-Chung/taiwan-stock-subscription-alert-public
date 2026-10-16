@@ -10,6 +10,7 @@ const OFFICIAL_JSON_PATHS: Readonly<Record<string, readonly string[]>> = {
   "www.tpex.org.tw": ["/openapi/"],
   "openapi.twse.com.tw": ["/v1/"],
   "mis.twse.com.tw": ["/stock/api/"],
+  "api.fugle.tw": ["/marketdata/v1.0/stock/"],
 };
 
 export interface JsonSnapshot {
@@ -63,10 +64,11 @@ export async function fetchJsonResult<T>(
   url: string,
   timeoutMs = 20_000,
   snapshot?: JsonSnapshotOptions,
+  requestHeaders?: Readonly<Record<string, string>>,
 ): Promise<FetchJsonResult<T>> {
   try {
     const loaded = await requestWithRetry(url, DEFAULT_MAX_ATTEMPTS, async () => {
-      const response = await fetchJsonResponse(url, timeoutMs);
+      const response = await fetchJsonResponse(url, timeoutMs, requestHeaders);
       assertSuccessful(response);
       assertJsonContentType(response);
       const body = await response.text();
@@ -115,7 +117,11 @@ export async function postFormText(
 }
 
 /** 只在官方 HTTPS 白名單內跟隨有限 JSON redirect，避免轉往未知來源。 */
-async function fetchJsonResponse(url: string, timeoutMs: number): Promise<Response> {
+async function fetchJsonResponse(
+  url: string,
+  timeoutMs: number,
+  requestHeaders?: Readonly<Record<string, string>>,
+): Promise<Response> {
   const original = new URL(url);
   let current = original;
   for (let redirectCount = 0; ; redirectCount += 1) {
@@ -124,6 +130,7 @@ async function fetchJsonResponse(url: string, timeoutMs: number): Promise<Respon
       headers: {
         accept: "application/json",
         "user-agent": "taiwan-stock-subscription-alert/0.1 personal-use",
+        ...requestHeaders,
       },
       signal: AbortSignal.timeout(timeoutMs),
     });

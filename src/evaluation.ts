@@ -16,6 +16,7 @@ export interface EvaluationOptions {
   issuanceOverrides: Record<string, IssuanceOverride>;
   externalFetchEnabled: boolean;
   mopsFetchEnabled: boolean;
+  fugleApiKey?: string;
   sourceSnapshots?: JsonSnapshotStore;
 }
 
@@ -57,7 +58,7 @@ export async function evaluateSubscriptionDateResult(
     const override = options.issuanceOverrides[offering.code];
     const [quoteResult, capitalResult, issuanceResult] =
       await Promise.allSettled([
-        fetchQuote(offering, options.sourceSnapshots),
+        fetchQuote(offering, options.sourceSnapshots, options.fugleApiKey),
         fetchCapitalInfo(
           offering.code,
           offering.issueMarketLabel,
@@ -123,7 +124,10 @@ export async function evaluateSubscriptionDateResult(
 /** 預先載入今日行情與公司資料快照；不查 MOPS、不發 LINE，也不寫發送紀錄。 */
 export async function warmSubscriptionDateSources(
   date: string,
-  options: Pick<EvaluationOptions, "externalFetchEnabled" | "sourceSnapshots">,
+  options: Pick<
+    EvaluationOptions,
+    "externalFetchEnabled" | "fugleApiKey" | "sourceSnapshots"
+  >,
 ): Promise<SourceWarmupResult> {
   if (!options.externalFetchEnabled) {
     throw new Error(
@@ -136,7 +140,7 @@ export async function warmSubscriptionDateSources(
 
   for (const offering of offerings) {
     const [quoteResult, capitalResult] = await Promise.allSettled([
-      fetchQuote(offering, options.sourceSnapshots),
+      fetchQuote(offering, options.sourceSnapshots, options.fugleApiKey),
       fetchCapitalInfo(
         offering.code,
         offering.issueMarketLabel,

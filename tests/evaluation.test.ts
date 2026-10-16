@@ -110,7 +110,11 @@ it("預熱只取得行情與公司資料，不查 MOPS 或產生訊息", async (
     completeOfferingCount: 1,
     sourceFailureCount: 0,
   });
-  expect(fetchQuote).toHaveBeenCalledWith(expect.any(Object), sourceSnapshots);
+  expect(fetchQuote).toHaveBeenCalledWith(
+    expect.any(Object),
+    sourceSnapshots,
+    undefined,
+  );
   expect(fetchCapitalInfo).toHaveBeenCalledWith(
     "6967",
     "上櫃增資",

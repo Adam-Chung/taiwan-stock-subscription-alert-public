@@ -95,6 +95,41 @@ describe("fetchQuote", () => {
     );
   });
 
+  it("TPEx 與官方快照皆失敗時使用已授權的 Fugle 興櫃行情", async () => {
+    process.env.HTTP_RETRY_BASE_MS = "0";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          date: "2026-10-16",
+          market: "ESB",
+          symbol: "7855",
+          name: "和運租車",
+          previousClose: 83.82,
+          closePrice: 78.7,
+          closeTime: Date.parse("2026-10-16T04:20:00Z"),
+          avgPrice: 79.1,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(fetchQuote(offering, undefined, "fugle-test-key")).resolves.toMatchObject({
+      market: "emerging",
+      currentPrice: 78.7,
+      previousClose: 83.82,
+      quotedAt: "2026-10-16 12:20:00",
+      usedPreviousClose: false,
+    });
+    expect(fetchMock.mock.calls[3]?.[1]?.headers).toMatchObject({
+      "X-API-KEY": "fugle-test-key",
+    });
+  });
+
   it("TPEx 暫時失敗時使用期限內官方快照並保留快照時間", async () => {
     process.env.HTTP_RETRY_BASE_MS = "0";
     const storedAt = new Date().toISOString();

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   isExternalFetchEnabled,
+  isFugleFetchEnabled,
   isMopsFetchEnabled,
 } from "../src/config.js";
 
 const originalExternalValue = process.env.ENABLE_EXTERNAL_FETCH;
 const originalMopsValue = process.env.ENABLE_MOPS_FETCH;
+const originalFugleValue = process.env.ENABLE_FUGLE_FETCH;
 
 afterEach(() => {
   if (originalExternalValue === undefined) {
@@ -18,20 +20,29 @@ afterEach(() => {
   } else {
     process.env.ENABLE_MOPS_FETCH = originalMopsValue;
   }
+  if (originalFugleValue === undefined) {
+    delete process.env.ENABLE_FUGLE_FETCH;
+  } else {
+    process.env.ENABLE_FUGLE_FETCH = originalFugleValue;
+  }
 });
 
 describe("external source authorization gates", () => {
   it("缺少明確同意時預設停用", () => {
     delete process.env.ENABLE_EXTERNAL_FETCH;
     delete process.env.ENABLE_MOPS_FETCH;
+    delete process.env.ENABLE_FUGLE_FETCH;
     expect(isExternalFetchEnabled()).toBe(false);
     expect(isMopsFetchEnabled()).toBe(false);
+    expect(isFugleFetchEnabled()).toBe(false);
   });
 
   it("只有明確的 true 才啟用", () => {
     process.env.ENABLE_EXTERNAL_FETCH = "true";
     process.env.ENABLE_MOPS_FETCH = "true";
+    process.env.ENABLE_FUGLE_FETCH = "true";
     expect(isExternalFetchEnabled()).toBe(true);
     expect(isMopsFetchEnabled()).toBe(true);
+    expect(isFugleFetchEnabled()).toBe(true);
   });
 });

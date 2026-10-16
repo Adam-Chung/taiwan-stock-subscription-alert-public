@@ -13,6 +13,7 @@
     "MIN_SAFETY_MARGIN_PERCENT": "10",
     "HTTP_MIN_INTERVAL_MS": "1500",
     "ENABLE_EXTERNAL_FETCH": "false",
-    "ENABLE_MOPS_FETCH": "false"
+    "ENABLE_MOPS_FETCH": "false",
+    "ENABLE_FUGLE_FETCH": "false"
   }
 }

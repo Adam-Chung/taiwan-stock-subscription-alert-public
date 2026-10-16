@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { fetchCapitalInfo } from "../src/clients/capital.js";
+import {
+  fetchCapitalInfo,
+  parseMopsCapitalInfo,
+} from "../src/clients/capital.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -83,6 +86,43 @@ it("公司資料來源暫時失敗時不快取缺漏，下一檔可重新取得"
     issuedCommonShares: 186_606_250,
     industryType: "其他（20）",
   });
-  expect(fetchMock).toHaveBeenCalledTimes(4);
+  expect(
+    fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("mopsfin_t187ap03_O"),
+    ),
+  ).toHaveLength(4);
   warning.mockRestore();
+});
+
+it("TPEx 找不到初上市公司時改從 MOPS 詳細資料取得股數與產業", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("openapi")) return Response.json([]);
+      if (url.includes("ajax_t05st03")) {
+        return new Response(`
+          <div>股票代號 7710</div>
+          <div>產業類別 電腦及週邊設備業 外國企業註冊地國 －</div>
+          <div>已發行普通股數或 TDR原股發行股數 63,905,580股 (含私募 0股)</div>
+        `);
+      }
+      return new Response("", { status: 404 });
+    }),
+  );
+
+  await expect(fetchCapitalInfo("7710", "初上市")).resolves.toEqual({
+    code: "7710",
+    issuedCommonShares: 63_905_580,
+    industryType: "電腦及週邊設備業（25）",
+  });
+});
+
+it("MOPS 公司詳細資料拒絕代號不符的回應", () => {
+  expect(() =>
+    parseMopsCapitalInfo(
+      "7710",
+      "股票代號 7855 產業類別 其他 外國企業註冊地國 － 已發行普通股數或 TDR原股發行股數 1股",
+    ),
+  ).toThrow("MOPS 公司代號不符");
 });

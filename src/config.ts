@@ -26,6 +26,11 @@ export function isMopsFetchEnabled(): boolean {
   return process.env.ENABLE_MOPS_FETCH === "true";
 }
 
+/** 判斷是否允許在官方興櫃行情失敗時使用 Fugle 備援。 */
+export function isFugleFetchEnabled(): boolean {
+  return process.env.ENABLE_FUGLE_FETCH === "true";
+}
+
 function numericEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined) return fallback;

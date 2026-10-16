@@ -28,6 +28,9 @@ interface WorkerEnvironment {
   MIN_SAFETY_MARGIN_PERCENT?: string;
   ENABLE_EXTERNAL_FETCH?: string;
   ENABLE_MOPS_FETCH?: string;
+  ENABLE_FUGLE_FETCH?: string;
+  FUGLE_API_KEY?: string;
+  SNAPSHOT_INGEST_SECRET?: string;
   ISSUANCE_OVERRIDES_JSON?: string;
 }
 
@@ -72,6 +75,13 @@ const DEFAULT_LATEST_SEND_TIME = "13:15";
 const SNAPSHOT_WARMUP_CRON = "0 4 * * MON-FRI";
 const HISTORY_TTL_SECONDS = 120 * 24 * 60 * 60;
 const SOURCE_SNAPSHOT_TTL_SECONDS = 10 * 24 * 60 * 60;
+const SNAPSHOT_INGEST_PATH = "/internal/source-snapshots";
+const SNAPSHOT_SIGNATURE_MAX_AGE_SECONDS = 5 * 60;
+const SNAPSHOT_BODY_MAX_BYTES = 5 * 1024 * 1024;
+const ALLOWED_INGEST_SNAPSHOT_KEYS = new Set([
+  "tpex-emerging-quotes",
+  "company-emerging",
+]);
 
 const dependencies: WorkerDependencies = {
   evaluate: evaluateSubscriptionDateResult,
@@ -90,11 +100,189 @@ export default {
     console.log(JSON.stringify(result));
   },
 
-  /** 提供不含敏感資料的健康檢查，不開放網路手動觸發發送。 */
-  async fetch(): Promise<Response> {
-    return Response.json({ service: "taiwan-stock-subscription-alert", ok: true });
+  /** 提供健康檢查與受簽章保護的官方快照匯入，不開放網路手動觸發發送。 */
+  async fetch(request: Request, env: WorkerEnvironment): Promise<Response> {
+    return handleWorkerRequest(request, env);
   },
 } satisfies ExportedHandler<WorkerEnvironment>;
+
+interface SnapshotIngestItem {
+  key: string;
+  storedAt: string;
+  body: string;
+}
+
+interface SnapshotIngestPayload {
+  snapshots: SnapshotIngestItem[];
+}
+
+/** 處理 Worker HTTP 請求；只允許健康檢查與固定資料集的簽章匯入。 */
+export async function handleWorkerRequest(
+  request: Request,
+  env: WorkerEnvironment,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/") {
+    return Response.json({ service: "taiwan-stock-subscription-alert", ok: true });
+  }
+  if (request.method !== "POST" || url.pathname !== SNAPSHOT_INGEST_PATH) {
+    return Response.json({ error: "not_found" }, { status: 404 });
+  }
+
+  const secret = requiredValue(
+    env.SNAPSHOT_INGEST_SECRET,
+    "SNAPSHOT_INGEST_SECRET",
+  );
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (declaredLength > SNAPSHOT_BODY_MAX_BYTES) {
+    return Response.json({ error: "payload_too_large" }, { status: 413 });
+  }
+  const body = await request.text();
+  if (new TextEncoder().encode(body).byteLength > SNAPSHOT_BODY_MAX_BYTES) {
+    return Response.json({ error: "payload_too_large" }, { status: 413 });
+  }
+
+  const timestamp = request.headers.get("x-snapshot-timestamp") ?? "";
+  const signature = request.headers.get("x-snapshot-signature") ?? "";
+  if (!isFreshUnixTimestamp(timestamp, Date.now())) {
+    return Response.json({ error: "expired_signature" }, { status: 401 });
+  }
+  if (!(await verifySnapshotSignature(secret, timestamp, body, signature))) {
+    return Response.json({ error: "invalid_signature" }, { status: 403 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    return Response.json({ error: "invalid_json" }, { status: 400 });
+  }
+  if (!isSnapshotIngestPayload(payload)) {
+    return Response.json({ error: "invalid_payload" }, { status: 400 });
+  }
+
+  const store = sourceSnapshotStore(env.ALERT_HISTORY);
+  let savedCount = 0;
+  for (const snapshot of payload.snapshots) {
+    const existing = await store.load(snapshot.key);
+    if (existing && Date.parse(existing.storedAt) >= Date.parse(snapshot.storedAt)) {
+      continue;
+    }
+    await store.save(snapshot.key, {
+      storedAt: snapshot.storedAt,
+      body: snapshot.body,
+    });
+    savedCount += 1;
+  }
+  console.info(
+    JSON.stringify({
+      event: "source_snapshots_ingested",
+      receivedCount: payload.snapshots.length,
+      savedCount,
+      keys: payload.snapshots.map((snapshot) => snapshot.key),
+    }),
+  );
+  return Response.json({ accepted: true, savedCount }, { status: 202 });
+}
+
+/** 驗證簽章時間位於五分鐘內，並拒絕明顯來自未來的請求。 */
+function isFreshUnixTimestamp(value: string, nowMs: number): boolean {
+  if (!/^\d{10}$/.test(value)) return false;
+  const timestampMs = Number(value) * 1_000;
+  const ageMs = nowMs - timestampMs;
+  return ageMs >= -60_000 && ageMs <= SNAPSHOT_SIGNATURE_MAX_AGE_SECONDS * 1_000;
+}
+
+/** 使用 Web Crypto 驗證 timestamp 與完整 body 的 HMAC-SHA256 十六進位簽章。 */
+async function verifySnapshotSignature(
+  secret: string,
+  timestamp: string,
+  body: string,
+  signature: string,
+): Promise<boolean> {
+  if (!/^[0-9a-f]{64}$/i.test(signature)) return false;
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  return crypto.subtle.verify(
+    "HMAC",
+    key,
+    hexToBytes(signature),
+    encoder.encode(`${timestamp}.${body}`),
+  );
+}
+
+/** 將已驗證格式的十六進位字串轉成簽章位元組。 */
+function hexToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/** 驗證匯入內容只包含兩個允許的官方資料集與可解析 JSON 陣列。 */
+function isSnapshotIngestPayload(value: unknown): value is SnapshotIngestPayload {
+  if (!value || typeof value !== "object") return false;
+  const snapshots = (value as { snapshots?: unknown }).snapshots;
+  if (!Array.isArray(snapshots) || snapshots.length < 1 || snapshots.length > 2) {
+    return false;
+  }
+  const keys = new Set<string>();
+  return snapshots.every((snapshot) => {
+    if (!snapshot || typeof snapshot !== "object") return false;
+    const item = snapshot as Record<string, unknown>;
+    if (
+      typeof item.key !== "string" ||
+      !ALLOWED_INGEST_SNAPSHOT_KEYS.has(item.key) ||
+      keys.has(item.key) ||
+      typeof item.storedAt !== "string" ||
+      !isRecentSnapshotTime(item.storedAt) ||
+      typeof item.body !== "string"
+    ) {
+      return false;
+    }
+    keys.add(item.key);
+    return isValidSnapshotBody(item.key, item.body);
+  });
+}
+
+/** 驗證資料擷取時間不超過十分鐘，避免舊資料冒充新快照。 */
+function isRecentSnapshotTime(value: string): boolean {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return false;
+  const ageMs = Date.now() - parsed;
+  return ageMs >= -60_000 && ageMs <= 10 * 60 * 1_000;
+}
+
+/** 依固定資料鍵驗證必要欄位，不保存錯誤頁或不相關 JSON。 */
+function isValidSnapshotBody(key: string, body: string): boolean {
+  try {
+    const rows: unknown = JSON.parse(body);
+    if (!Array.isArray(rows) || rows.length === 0) return false;
+    return rows.every((row) => {
+      if (!row || typeof row !== "object") return false;
+      const record = row as Record<string, unknown>;
+      if (key === "tpex-emerging-quotes") {
+        return (
+          typeof record.SecuritiesCompanyCode === "string" &&
+          typeof record.LatestPrice === "string"
+        );
+      }
+      return (
+        typeof record.SecuritiesCompanyCode === "string" &&
+        typeof record.IssueShares === "string"
+      );
+    });
+  } catch {
+    return false;
+  }
+}
 
 /** 依 Cron 類型區分只讀預熱與正式通知，避免預熱時載入收件者或發送 LINE。 */
 export async function executeWorkerSchedule(
@@ -217,6 +405,10 @@ export async function executeScheduledAlert(
 
 /** 建立 Worker 專用評估設定並驗證所有數值。 */
 function evaluationOptions(env: WorkerEnvironment): EvaluationOptions {
+  const fugleApiKey = env.FUGLE_API_KEY?.trim();
+  if (env.ENABLE_FUGLE_FETCH === "true" && !fugleApiKey) {
+    console.warn(JSON.stringify({ event: "fugle_fallback_secret_missing" }));
+  }
   return {
     policy: {
       minDiscountPercent: numericValue(env.MIN_DISCOUNT_PERCENT, 20),
@@ -225,6 +417,9 @@ function evaluationOptions(env: WorkerEnvironment): EvaluationOptions {
     issuanceOverrides: parseIssuanceOverrides(env.ISSUANCE_OVERRIDES_JSON),
     externalFetchEnabled: env.ENABLE_EXTERNAL_FETCH === "true",
     mopsFetchEnabled: env.ENABLE_MOPS_FETCH === "true",
+    ...(env.ENABLE_FUGLE_FETCH === "true" && fugleApiKey
+      ? { fugleApiKey }
+      : {}),
     sourceSnapshots: sourceSnapshotStore(env.ALERT_HISTORY),
   };
 }

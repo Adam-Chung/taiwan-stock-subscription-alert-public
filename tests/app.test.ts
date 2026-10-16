@@ -33,6 +33,7 @@ vi.mock("../src/clients/mops-issuance.js", () => ({
 
 vi.mock("../src/config.js", () => ({
   isExternalFetchEnabled: vi.fn().mockReturnValue(true),
+  isFugleFetchEnabled: vi.fn().mockReturnValue(false),
   isMopsFetchEnabled: vi.fn().mockReturnValue(false),
   loadIssuanceOverrides: vi.fn().mockResolvedValue({}),
   loadPolicy: vi.fn().mockReturnValue({

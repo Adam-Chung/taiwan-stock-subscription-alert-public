@@ -1,6 +1,7 @@
 import { pushLineMessageToRecipients } from "./clients/line.js";
 import {
   isExternalFetchEnabled,
+  isFugleFetchEnabled,
   isMopsFetchEnabled,
   loadIssuanceOverrides,
   loadPolicy,
@@ -35,6 +36,9 @@ export async function run(date: string, dryRun: boolean): Promise<string> {
       issuanceOverrides: await loadIssuanceOverrides(),
       externalFetchEnabled: isExternalFetchEnabled(),
       mopsFetchEnabled: isMopsFetchEnabled(),
+      ...(isFugleFetchEnabled() && process.env.FUGLE_API_KEY?.trim()
+        ? { fugleApiKey: process.env.FUGLE_API_KEY.trim() }
+        : {}),
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
