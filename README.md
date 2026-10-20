@@ -155,7 +155,11 @@ npm run check
 `npm run check` 會執行 TypeScript build、Cloudflare Worker dry-run bundle 與 Vitest。
 回報問題或提出建議前請先閱讀 [Contributing](CONTRIBUTING.md)。
 
-## License 狀態
+## 授權
 
-目前尚未授予開源或再利用 License。除 GitHub 平台為顯示 Repository 所必要的權利
-外，所有權利保留；公開可見不代表允許複製、修改、散布、商業使用或建立衍生作品。
+本專案採用 [Personal Non-Commercial Source License 1.0](LICENSE.md)，僅允許自然人基於
+個人、非商業目的查看、複製、執行及修改。禁止商業或組織使用、營利、代管服務、公開
+散布、轉售及再授權；如有其他需求，必須事先取得著作權人的書面授權。
+
+這是 source-available 授權，不是 OSI 認可的開放原始碼授權。第三方套件與資料來源仍
+適用各自的授權及服務條款。

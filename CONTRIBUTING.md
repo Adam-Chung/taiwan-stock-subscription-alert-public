@@ -9,9 +9,10 @@
 - 官方資料格式變更或測試案例建議
 - 文件錯誤與無障礙改善
 
-由於本 Repository 尚未選定 License 與貢獻授權機制，目前先不接受 Pull Request。
-請以 Issue 描述問題與建議，不要貼上受著作權保護的完整第三方內容、正式訊息、
-token、userId、雜湊、內部 URL 或 production log。
+本 Repository 採用僅限個人非商業使用的 source-available 授權。由於尚未建立程式碼
+貢獻授權機制，目前先不接受 Pull Request。請以 Issue 描述問題與建議，不要貼上受
+著作權保護的完整第三方內容、正式訊息、token、userId、雜湊、內部 URL 或
+production log。
 
 維護者會評估 Issue 內容，並在完成程式碼審查、測試與安全檢查後安排修正。
 
