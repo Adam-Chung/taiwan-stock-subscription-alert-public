@@ -57,7 +57,9 @@ it("通知包含目前股價、前收、今日漲跌幅與股票公告連結", (
   expect(message).toContain("判定：✅ 完整符合");
   expect(message).not.toContain("承銷價帳面報酬率");
   expect(message).toContain("本次新增股數：10,000 股");
-  expect(message).toContain("原已發行普通股數：90,000 股");
+  expect(message).toContain("案件類型：上市增資");
+  expect(message).toContain("近一個月平均交易量：資料不足");
+  expect(message).toContain("原已發行股數：90,000 股");
   expect(message).toContain("發行後總股數：100,000 股");
   expect(message).toContain("股數稀釋率：10.00%");
   expect(message).toContain("安全邊際：30.00 個百分點");
@@ -98,7 +100,7 @@ it("價差符合但發行資料不足時保留發行欄位空白", () => {
     industryType: "電子零組件業（28）",
     recommendationKind: "price-only",
     recommended: true,
-    warning: "缺少已發行普通股數，無法計算股數稀釋率與安全邊際",
+    warning: "缺少原已發行股數，無法計算股數稀釋率與安全邊際",
   } satisfies Evaluation;
   const message = buildSuccessMessage("2026-07-23", [completeItem], []);
   expect(message).toContain("判定：價差符合，但發行資料不足");
@@ -106,7 +108,7 @@ it("價差符合但發行資料不足時保留發行欄位空白", () => {
   expect(message).toContain("前一交易日收盤價：資料不足");
   expect(message).toContain("今日漲跌：無法計算");
   expect(message).toContain("本次新增股數：\n");
-  expect(message).toContain("原已發行普通股數：90,000 股");
+  expect(message).toContain("原已發行股數：90,000 股");
   expect(message).toContain("發行後總股數：\n");
   expect(message).toContain("股數稀釋率：\n");
   expect(message).toContain("安全邊際：\n");
@@ -140,7 +142,8 @@ it("資料不完整區塊包含股票代號、名稱與公告連結", () => {
   expect(message).toContain("實際承銷價：66 元");
   expect(message).not.toContain("公開承銷股數");
   expect(message).not.toContain("撥券日期");
-  expect(message).toContain("原已發行普通股數：500,000,000 股");
+  expect(message).toContain("近一個月平均交易量：資料不足");
+  expect(message).toContain("原已發行股數：500,000,000 股");
   expect(message).toContain("整次新增發行股數：資料不足");
   expect(message).toContain("發行後總股數：資料不足");
   expect(message).toContain("原因：測試資料缺少");
@@ -234,7 +237,7 @@ it("行情失敗但完整股數存在時仍顯示發行後股數與稀釋率", (
     },
   ]);
 
-  expect(message).toContain("原已發行普通股數：90,000,000 股");
+  expect(message).toContain("原已發行股數：90,000,000 股");
   expect(message).toContain("整次新增發行股數：10,000,000 股");
   expect(message).toContain("發行後總股數：100,000,000 股");
   expect(message).toContain("股數稀釋率：10.00%");
@@ -277,7 +280,7 @@ it("興櫃行情明確標示最近成交價與前一交易日平均價", () => {
   expect(message).toContain("較前日均價：-4.70 元（-4.68%）");
 });
 
-it("使用官方快取時在 LINE 明示資料時效", () => {
+it("只有舊行情可能影響判斷時才在 LINE 明示資料時效", () => {
   const item = {
     offering: {
       code: "2249",
@@ -312,4 +315,40 @@ it("使用官方快取時在 LINE 明示資料時效", () => {
   expect(message).toContain(
     "資料時效：行情使用 2026/10/14 12:00 保存的官方快取",
   );
+});
+
+it("顯示近一個月平均交易量並將前收備援標成昨日股價", () => {
+  const item = {
+    offering: {
+      code: "5284",
+      name: "jpp-KY",
+      issueMarketLabel: "第一上市公司現金增資",
+      subscriptionEndDate: "2026-10-20",
+      actualUnderwritingPrice: 250,
+      actualUnderwritingShares: 192_000,
+      totalUnderwritingAmount: 48_000_000,
+      allotmentDate: "2026-10-28",
+      cancelled: false,
+    },
+    quote: {
+      code: "5284",
+      name: "jpp-KY",
+      market: "tse",
+      currentPrice: 294,
+      previousClose: 294,
+      previousPriceKind: "close",
+      quotedAt: "2026-10-19",
+      usedPreviousClose: true,
+    },
+    discountPercent: 14.97,
+    averageMonthlyVolume: 123_456,
+    recommendationKind: "price-only",
+    recommended: true,
+    warning: "缺少整次新增發行股數，無法計算股數稀釋率與安全邊際",
+  } satisfies Evaluation;
+
+  const message = buildSuccessMessage("2026-10-20", [item], []);
+  expect(message).toContain("目前股價：294 元（昨日股價）");
+  expect(message).toContain("近一個月平均交易量：123,456 股／日");
+  expect(message).toContain("今日漲跌：無法計算");
 });

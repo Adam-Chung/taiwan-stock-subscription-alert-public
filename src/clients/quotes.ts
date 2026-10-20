@@ -1,7 +1,6 @@
 import type { Market, Quote, SubscriptionOffering } from "../domain/types.js";
 import { compactRocDateToIso } from "../lib/date.js";
 import {
-  fetchJson,
   fetchJsonResult,
   type JsonSnapshotStore,
 } from "./http.js";
@@ -29,6 +28,7 @@ interface FugleIntradayQuote {
   closePrice?: number;
   closeTime?: number;
   avgPrice?: number;
+  lastPrice?: number;
   lastTrade?: {
     price?: number;
     time?: number;
@@ -53,15 +53,28 @@ export async function fetchQuote(
     try {
       const quote =
         market === "emerging"
-          ? await fetchEmergingQuote(offering.code, snapshotStore, fugleApiKey)
+          ? await fetchEmergingQuote(offering.code, snapshotStore)
           : await fetchMisQuote(offering.code, market, snapshotStore);
       if (quote) return quote;
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
+  if (fugleApiKey?.trim()) {
+    try {
+      const quote = await fetchFugleQuote(
+        offering.code,
+        markets,
+        fugleApiKey.trim(),
+        snapshotStore,
+      );
+      if (quote) return quote;
+    } catch (error) {
+      errors.push(`Fugle：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   throw new Error(
-    `上市即時行情與官方興櫃行情皆未取得，無法計算 ${offering.code} 的市價折價率${
+    `上市即時行情、官方興櫃行情與已授權備援皆未取得，無法計算 ${offering.code} 的市價折價率${
       errors.length ? `：${errors.join("；")}` : ""
     }`,
   );
@@ -113,42 +126,22 @@ async function fetchMisQuote(
 async function fetchEmergingQuote(
   code: string,
   snapshotStore?: JsonSnapshotStore,
-  fugleApiKey?: string,
 ): Promise<Quote | undefined> {
-  let tpexFailure: unknown;
-  try {
-    const result = await fetchJsonResult<TpexEmergingQuoteRow[]>(
-      TPEX_EMERGING_QUOTES_URL,
-      20_000,
-      snapshotStore
-        ? {
-            store: snapshotStore,
-            key: "tpex-emerging-quotes",
-            maxAgeMs: TPEX_QUOTE_SNAPSHOT_MAX_AGE_MS,
-          }
-        : undefined,
-    );
-    const item = result.value.find(
-      (row) => row.SecuritiesCompanyCode.trim() === code,
-    );
-    if (item) return tpexQuote(code, item, result.snapshotAt);
-  } catch (error) {
-    tpexFailure = error;
-  }
-
-  if (fugleApiKey?.trim()) {
-    try {
-      return await fetchFugleEmergingQuote(code, fugleApiKey.trim(), snapshotStore);
-    } catch (error) {
-      const tpexReason = tpexFailure instanceof Error
-        ? tpexFailure.message
-        : "TPEx 找不到該股票";
-      const fugleReason = error instanceof Error ? error.message : String(error);
-      throw new Error(`TPEx：${tpexReason}；Fugle：${fugleReason}`);
-    }
-  }
-  if (tpexFailure) throw tpexFailure;
-  return undefined;
+  const result = await fetchJsonResult<TpexEmergingQuoteRow[]>(
+    TPEX_EMERGING_QUOTES_URL,
+    20_000,
+    snapshotStore
+      ? {
+          store: snapshotStore,
+          key: "tpex-emerging-quotes",
+          maxAgeMs: TPEX_QUOTE_SNAPSHOT_MAX_AGE_MS,
+        }
+      : undefined,
+  );
+  const item = result.value.find(
+    (row) => row.SecuritiesCompanyCode.trim() === code,
+  );
+  return item ? tpexQuote(code, item, result.snapshotAt) : undefined;
 }
 
 /** 將 TPEx 興櫃資料列轉為統一行情格式。 */
@@ -184,9 +177,10 @@ function tpexQuote(
   };
 }
 
-/** 從免費 Fugle 日內行情 API 取得單一興櫃股票，僅作 TPEx 與官方快照皆失敗時的備援。 */
-async function fetchFugleEmergingQuote(
+/** 從已授權 Fugle 日內行情 API 取得單一股票，作 MIS 或 TPEx 失敗後的跨網路備援。 */
+async function fetchFugleQuote(
   code: string,
+  expectedMarkets: readonly Market[],
   apiKey: string,
   snapshotStore?: JsonSnapshotStore,
 ): Promise<Quote | undefined> {
@@ -196,34 +190,41 @@ async function fetchFugleEmergingQuote(
     snapshotStore
       ? {
           store: snapshotStore,
-          key: `fugle-emerging-${code}`,
+          key: `fugle-quote-${code}`,
           maxAgeMs: FUGLE_QUOTE_SNAPSHOT_MAX_AGE_MS,
         }
       : undefined,
     { "X-API-KEY": apiKey },
   );
   const item = result.value;
-  if (item.symbol !== code || item.market !== "ESB") return undefined;
+  const market = fugleMarket(item.market);
+  if (item.symbol !== code || !market || !expectedMarkets.includes(market)) {
+    return undefined;
+  }
 
-  const tradedPrice = finiteNumber(item.lastTrade?.price, item.closePrice);
-  const averagePrice = finiteNumber(item.avgPrice);
-  const previousAverage = finiteNumber(item.previousClose);
+  const tradedPrice = finiteNumber(
+    item.lastTrade?.price,
+    item.lastPrice,
+    item.closePrice,
+  );
+  const averagePrice = market === "emerging" ? finiteNumber(item.avgPrice) : Number.NaN;
+  const previousPrice = finiteNumber(item.previousClose);
   const currentPrice = Number.isFinite(tradedPrice)
     ? tradedPrice
     : Number.isFinite(averagePrice)
       ? averagePrice
-      : previousAverage;
+      : previousPrice;
   if (!Number.isFinite(currentPrice)) return undefined;
 
   return {
     code,
     name: item.name?.trim() || code,
-    market: "emerging",
+    market,
     currentPrice,
-    ...(Number.isFinite(previousAverage)
-      ? { previousClose: previousAverage }
+    ...(Number.isFinite(previousPrice)
+      ? { previousClose: previousPrice }
       : {}),
-    previousPriceKind: "average",
+    previousPriceKind: market === "emerging" ? "average" : "close",
     quotedAt: formatFugleQuoteTime(item),
     usedPreviousClose:
       !Number.isFinite(tradedPrice) && !Number.isFinite(averagePrice),
@@ -231,15 +232,26 @@ async function fetchFugleEmergingQuote(
   };
 }
 
+/** 將 Fugle 市場代碼映射為內部市場；創新板行情沿用上市市場路徑。 */
+function fugleMarket(value: string): Market | undefined {
+  if (value === "TSE" || value === "TIB") return "tse";
+  if (value === "OTC") return "otc";
+  if (value === "ESB") return "emerging";
+  return undefined;
+}
+
 /** 依序挑出第一個有限數值，所有候選都無效時回傳 NaN。 */
 function finiteNumber(...values: Array<number | undefined>): number {
   return values.find((value) => Number.isFinite(value)) ?? Number.NaN;
 }
 
-/** 將 Fugle 毫秒時間戳轉成台灣時間；缺少時間時只保留資料日期。 */
+/** 將 Fugle 微秒或毫秒時間戳轉成台灣時間；缺少時間時只保留資料日期。 */
 function formatFugleQuoteTime(item: FugleIntradayQuote): string {
   const timestamp = finiteNumber(item.lastTrade?.time, item.closeTime);
   if (!Number.isFinite(timestamp)) return item.date;
+  const milliseconds = timestamp > 100_000_000_000_000
+    ? timestamp / 1_000
+    : timestamp;
   return new Intl.DateTimeFormat("sv-SE", {
     timeZone: "Asia/Taipei",
     year: "numeric",
@@ -249,7 +261,7 @@ function formatFugleQuoteTime(item: FugleIntradayQuote): string {
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).format(new Date(timestamp));
+  }).format(new Date(milliseconds));
 }
 
 /** 依申購案件類型決定可接受的行情市場順序。 */

@@ -91,8 +91,82 @@ describe("fetchQuote", () => {
     );
 
     await expect(fetchQuote(offering)).rejects.toThrow(
-      "上市即時行情與官方興櫃行情皆未取得",
+      "上市即時行情、官方興櫃行情與已授權備援皆未取得",
     );
+  });
+
+  it("上市 MIS 三次失敗後使用 Fugle TSE 行情與昨日收盤價", async () => {
+    process.env.HTTP_RETRY_BASE_MS = "0";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(Response.json([]))
+      .mockResolvedValueOnce(
+        Response.json({
+          date: "2026-10-20",
+          market: "TSE",
+          symbol: "5284",
+          name: "jpp-KY",
+          previousClose: 294,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      fetchQuote(
+        { ...offering, code: "5284", issueMarketLabel: "上市增資" },
+        undefined,
+        "fugle-test-key",
+      ),
+    ).resolves.toMatchObject({
+      market: "tse",
+      currentPrice: 294,
+      previousClose: 294,
+      usedPreviousClose: true,
+    });
+    expect(String(fetchMock.mock.calls[4]?.[0])).toContain(
+      "/stock/intraday/quote/5284",
+    );
+  });
+
+  it("上櫃 MIS 三次失敗後只接受 Fugle OTC 市場行情", async () => {
+    process.env.HTTP_RETRY_BASE_MS = "0";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(Response.json([]))
+      .mockResolvedValueOnce(
+        Response.json({
+          date: "2026-10-20",
+          market: "OTC",
+          symbol: "6967",
+          name: "汎瑋材料",
+          previousClose: 72,
+          lastPrice: 73.5,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      fetchQuote(
+        { ...offering, code: "6967", issueMarketLabel: "上櫃增資" },
+        undefined,
+        "fugle-test-key",
+      ),
+    ).resolves.toMatchObject({
+      market: "otc",
+      currentPrice: 73.5,
+      previousClose: 72,
+      usedPreviousClose: false,
+    });
   });
 
   it("TPEx 與官方快照皆失敗時使用已授權的 Fugle 興櫃行情", async () => {

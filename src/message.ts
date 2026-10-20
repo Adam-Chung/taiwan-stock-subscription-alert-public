@@ -37,6 +37,7 @@ export function buildSuccessMessage(
         "",
         `${item.offering.code} ${item.offering.name}`,
         `產業類型：${item.industryType ?? "資料不足"}`,
+        `案件類型：${item.offering.issueMarketLabel}`,
         `判定：${
           item.recommendationKind === "complete"
             ? "✅ 完整符合"
@@ -48,8 +49,8 @@ export function buildSuccessMessage(
         `${isEmerging ? "興櫃最近成交價" : "目前股價"}：${formatMoney(item.quote.currentPrice)} 元${
           item.quote.usedPreviousClose
             ? isEmerging
-              ? "（最近交易日無成交，使用前日均價）"
-              : "（今日尚無成交，使用前收）"
+              ? "（前一交易日平均價）"
+              : "（昨日股價）"
             : ""
         }`,
         `${item.quote.previousPriceKind === "average" ? "前一交易日平均價" : "前一交易日收盤價"}：${
@@ -69,7 +70,8 @@ export function buildSuccessMessage(
         `實際承銷價：${formatMoney(item.offering.actualUnderwritingPrice)} 元`,
         `市價折價率：${formatPercent(item.discountPercent)}`,
         "",
-        `原已發行普通股數：${formatOptionalShares(item.issuedCommonShares)}`,
+        `近一個月平均交易量：${formatAverageVolume(item.averageMonthlyVolume)}`,
+        `原已發行股數：${formatOptionalShares(item.issuedCommonShares)}`,
         `本次新增股數：${
           item.totalNewShares === undefined
             ? ""
@@ -111,13 +113,11 @@ export function buildSuccessMessage(
         `案件類型：${item.offering.issueMarketLabel}`,
         `申購截止：${item.offering.subscriptionEndDate}`,
         `實際承銷價：${formatOptionalMoney(item.offering.actualUnderwritingPrice)}`,
-        `原已發行普通股數：${formatOptionalShares(item.capital?.issuedCommonShares)}`,
+        `近一個月平均交易量：${formatAverageVolume(item.averageMonthlyVolume)}`,
+        `原已發行股數：${formatOptionalShares(item.capital?.issuedCommonShares)}`,
         `整次新增發行股數：${formatOptionalShares(item.issuance?.totalNewShares)}`,
         `發行後總股數：${formatPostIssueShares(item)}`,
         `股數稀釋率：${formatFailureDilution(item)}`,
-        ...(item.capital?.officialSnapshotAt
-          ? [`資料時效：公司資料使用前次保存的官方快取`]
-          : []),
         `原因：${item.reason}`,
         `公告資訊：https://goodinfo.tw/tw/StockAnnounceList.asp?STOCK_ID=${encodeURIComponent(
           item.offering.code,
@@ -127,6 +127,13 @@ export function buildSuccessMessage(
   }
   header.push("", "提醒：以上為規則篩選結果，不代表保證獲利。");
   return header.join("\n");
+}
+
+/** 格式化近 30 個日曆日內有成交資料之交易日日均量。 */
+function formatAverageVolume(value: number | undefined): string {
+  return value !== undefined && Number.isFinite(value) && value >= 0
+    ? `${formatInteger(value)} 股／日`
+    : "資料不足";
 }
 
 /** 格式化可能尚未確定的承銷價。 */

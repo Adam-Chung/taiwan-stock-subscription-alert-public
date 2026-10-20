@@ -58,7 +58,7 @@ describe("evaluateOffering", () => {
     expect(result.warning).toContain("缺少整次新增發行股數");
   });
 
-  it("缺少已發行普通股數時仍回報價差符合", () => {
+  it("缺少原已發行股數時仍回報價差符合", () => {
     const result = evaluateOffering(
       offering,
       quote,
@@ -70,7 +70,37 @@ describe("evaluateOffering", () => {
       },
     );
     expect(result.recommendationKind).toBe("price-only");
-    expect(result.warning).toContain("缺少已發行普通股數");
+    expect(result.warning).toContain("缺少原已發行股數");
+  });
+
+  it("使用同日快照時不顯示無影響的資料時效", () => {
+    const result = evaluateOffering(
+      offering,
+      {
+        ...quote,
+        quotedAt: "2026-07-23 10:30:00",
+        officialSnapshotAt: "2026-07-23T04:00:00.000Z",
+      },
+      capital,
+      undefined,
+      { minDiscountPercent: 20, minSafetyMarginPercent: 10 },
+    );
+    expect(result.sourceWarnings).toBeUndefined();
+  });
+
+  it("快照內行情早於截止日且不是明示昨日價時顯示資料日期", () => {
+    const result = evaluateOffering(
+      offering,
+      {
+        ...quote,
+        quotedAt: "2026-07-22 13:30:00",
+        officialSnapshotAt: "2026-07-23T04:00:00.000Z",
+      },
+      capital,
+      undefined,
+      { minDiscountPercent: 20, minSafetyMarginPercent: 10 },
+    );
+    expect(result.sourceWarnings).toEqual(["行情資料日期為 2026/07/22"]);
   });
 
   it("缺少前收仍可依目前股價評估，但不計算漲跌幅", () => {

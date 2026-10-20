@@ -52,11 +52,11 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-it("行情失敗時仍保留已成功取得的原已發行普通股數", async () => {
+it("行情失敗時仍保留已成功取得的原已發行股數", async () => {
   const message = await run("2026-08-03", true);
 
   expect(message).toContain("7855 和運租車");
-  expect(message).toContain("原已發行普通股數：192,527,928 股");
+  expect(message).toContain("原已發行股數：192,527,928 股");
   expect(message).toContain("整次新增發行股數：資料不足");
   expect(message).toContain("原因：測試行情缺失");
 });

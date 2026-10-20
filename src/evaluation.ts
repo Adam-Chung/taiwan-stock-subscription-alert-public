@@ -2,6 +2,7 @@ import { fetchCapitalInfo } from "./clients/capital.js";
 import { fetchMopsIssuance } from "./clients/mops-issuance.js";
 import { fetchQuote } from "./clients/quotes.js";
 import { fetchEndingOfferings } from "./clients/subscriptions.js";
+import { fetchAverageMonthlyVolume } from "./clients/volumes.js";
 import { evaluateOffering, type EvaluationPolicy } from "./domain/calculations.js";
 import type {
   Evaluation,
@@ -56,7 +57,7 @@ export async function evaluateSubscriptionDateResult(
 
   for (const offering of offerings) {
     const override = options.issuanceOverrides[offering.code];
-    const [quoteResult, capitalResult, issuanceResult] =
+    const [quoteResult, capitalResult, issuanceResult, volumeResult] =
       await Promise.allSettled([
         fetchQuote(offering, options.sourceSnapshots, options.fugleApiKey),
         fetchCapitalInfo(
@@ -69,15 +70,26 @@ export async function evaluateSubscriptionDateResult(
           : options.mopsFetchEnabled
             ? fetchMopsIssuance(offering)
             : Promise.resolve(undefined),
+        options.fugleApiKey
+          ? fetchAverageMonthlyVolume(
+              offering.code,
+              offering.subscriptionEndDate,
+              options.fugleApiKey,
+              options.sourceSnapshots,
+            )
+          : Promise.resolve(undefined),
       ]);
     const capital =
       capitalResult.status === "fulfilled" ? capitalResult.value : undefined;
     const issuance =
       issuanceResult.status === "fulfilled" ? issuanceResult.value : undefined;
+    const averageMonthlyVolume =
+      volumeResult.status === "fulfilled" ? volumeResult.value : undefined;
 
     logRejectedSource(date, offering.code, "quote", quoteResult);
     logRejectedSource(date, offering.code, "capital", capitalResult);
     logRejectedSource(date, offering.code, "issuance", issuanceResult);
+    logRejectedSource(date, offering.code, "volume", volumeResult);
 
     if (!Number.isFinite(offering.actualUnderwritingPrice)) {
       failures.push({
@@ -85,6 +97,7 @@ export async function evaluateSubscriptionDateResult(
         reason: "實際承銷價尚未確定",
         ...(capital ? { capital } : {}),
         ...(issuance ? { issuance } : {}),
+        ...(averageMonthlyVolume !== undefined ? { averageMonthlyVolume } : {}),
       });
       continue;
     }
@@ -97,6 +110,7 @@ export async function evaluateSubscriptionDateResult(
             : String(quoteResult.reason),
         ...(capital ? { capital } : {}),
         ...(issuance ? { issuance } : {}),
+        ...(averageMonthlyVolume !== undefined ? { averageMonthlyVolume } : {}),
       });
       continue;
     }
@@ -108,6 +122,7 @@ export async function evaluateSubscriptionDateResult(
         capital,
         issuance,
         options.policy,
+        averageMonthlyVolume,
       ),
     );
   }
@@ -168,7 +183,7 @@ export async function warmSubscriptionDateSources(
 function logRejectedSource(
   date: string,
   code: string,
-  source: "quote" | "capital" | "issuance",
+  source: "quote" | "capital" | "issuance" | "volume",
   result: PromiseSettledResult<unknown>,
 ): void {
   if (result.status !== "rejected") return;

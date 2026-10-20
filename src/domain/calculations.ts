@@ -21,6 +21,7 @@ export function evaluateOffering(
   capital: CapitalInfo | undefined,
   issuance: IssuanceOverride | undefined,
   policy: EvaluationPolicy,
+  averageMonthlyVolume?: number,
 ): Evaluation {
   assertPositive("實際承銷價", offering.actualUnderwritingPrice);
   assertPositive("目前股價", quote.currentPrice);
@@ -28,6 +29,7 @@ export function evaluateOffering(
   const discountPercent =
     ((quote.currentPrice - offering.actualUnderwritingPrice) / quote.currentPrice) * 100;
   const hasPreviousClose =
+    !quote.usedPreviousClose &&
     quote.previousClose !== undefined &&
     Number.isFinite(quote.previousClose) &&
     quote.previousClose > 0;
@@ -45,9 +47,9 @@ export function evaluateOffering(
   let warning: string | undefined;
 
   if (!capital) {
-    warning = "缺少已發行普通股數，無法計算股數稀釋率與安全邊際";
+    warning = "缺少原已發行股數，無法計算股數稀釋率與安全邊際";
   } else if (issuance) {
-    assertPositive("已發行普通股數", capital.issuedCommonShares);
+    assertPositive("原已發行股數", capital.issuedCommonShares);
     assertPositive("整次新增發行股數", issuance.totalNewShares);
     totalNewShares = issuance.totalNewShares;
     postIssueTotalShares = capital.issuedCommonShares + issuance.totalNewShares;
@@ -60,14 +62,12 @@ export function evaluateOffering(
 
   const safetyMarginPercent =
     scalePercent === undefined ? undefined : discountPercent - scalePercent;
-  const sourceWarnings = [
-    ...(quote.officialSnapshotAt
-      ? [`行情使用 ${formatSnapshotTime(quote.officialSnapshotAt)} 保存的官方快取`]
-      : []),
-    ...(capital?.officialSnapshotAt
-      ? [`公司資料使用 ${formatSnapshotTime(capital.officialSnapshotAt)} 保存的官方快取`]
-      : []),
-  ];
+  const sourceWarnings = isQuoteFromEarlierDate(
+    quote.quotedAt,
+    offering.subscriptionEndDate,
+  ) && !quote.usedPreviousClose
+    ? [`行情資料日期為 ${formatQuoteDate(quote.quotedAt)}`]
+    : [];
   const passesDiscount = strictlyGreater(
     discountPercent,
     policy.minDiscountPercent,
@@ -105,6 +105,7 @@ export function evaluateOffering(
     ...(scalePercent !== undefined ? { scalePercent } : {}),
     ...(scaleKind !== undefined ? { scaleKind } : {}),
     ...(safetyMarginPercent !== undefined ? { safetyMarginPercent } : {}),
+    ...(averageMonthlyVolume !== undefined ? { averageMonthlyVolume } : {}),
     recommendationKind,
     recommended: recommendationKind !== "none",
     ...(warning ? { warning } : {}),
@@ -112,20 +113,22 @@ export function evaluateOffering(
   };
 }
 
-/** 將官方快取時間轉為固定且不受執行環境語系影響的顯示格式。 */
-function formatSnapshotTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat("zh-TW", {
-        timeZone: "Asia/Taipei",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
-      }).format(date);
+/** 判斷行情本身是否早於申購截止日，避免只因讀取快取就顯示無影響的時效警告。 */
+function isQuoteFromEarlierDate(quotedAt: string, subscriptionEndDate: string): boolean {
+  const quoteDate = extractIsoDate(quotedAt);
+  return quoteDate !== undefined && quoteDate < subscriptionEndDate;
+}
+
+/** 從行情時間抽出 ISO 日期，支援 MIS 的 YYYYMMDD 與一般 YYYY-MM-DD 格式。 */
+function extractIsoDate(value: string): string | undefined {
+  const compact = value.match(/^(\d{4})(\d{2})(\d{2})/);
+  if (compact) return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  return value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+}
+
+/** 將行情日期轉成適合 LINE 顯示的固定格式。 */
+function formatQuoteDate(value: string): string {
+  return extractIsoDate(value)?.replaceAll("-", "/") ?? value;
 }
 
 /** 以百分點容差執行嚴格大於，避免浮點誤差讓等於門檻的值入選。 */

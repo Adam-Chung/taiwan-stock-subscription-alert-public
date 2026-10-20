@@ -42,6 +42,10 @@ vi.mock("../src/clients/mops-issuance.js", () => ({
     .mockRejectedValue(new Error("HTTP 503：https://example.test/path?token=private")),
 }));
 
+vi.mock("../src/clients/volumes.js", () => ({
+  fetchAverageMonthlyVolume: vi.fn().mockResolvedValue(123_456),
+}));
+
 import {
   evaluateSubscriptionDateResult,
   warmSubscriptionDateSources,
@@ -78,7 +82,7 @@ it("新增股數失敗時保留原股數並記錄安全化來源錯誤", async (
     mopsFetchEnabled: true,
   });
 
-  expect(result.message).toContain("原已發行普通股數：24,904,477 股");
+  expect(result.message).toContain("原已發行股數：24,904,477 股");
   expect(result.message).toContain("本次新增股數：\n");
   expect(result.complete).toBe(false);
   expect(result.incompleteCount).toBe(1);

@@ -49,6 +49,7 @@ export interface Evaluation {
   scalePercent?: number;
   scaleKind?: "dilution";
   safetyMarginPercent?: number;
+  averageMonthlyVolume?: number;
   recommendationKind: "complete" | "consider" | "price-only" | "none";
   recommended: boolean;
   warning?: string;
@@ -60,4 +61,5 @@ export interface EvaluationFailure {
   reason: string;
   capital?: CapitalInfo;
   issuance?: IssuanceOverride;
+  averageMonthlyVolume?: number;
 }
