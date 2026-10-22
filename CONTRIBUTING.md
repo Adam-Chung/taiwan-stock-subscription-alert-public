@@ -10,13 +10,16 @@
 - 文件錯誤與無障礙改善
 
 本 Repository 採用僅限個人非商業使用的 source-available 授權。由於尚未建立程式碼
-貢獻授權機制，目前先不接受 Pull Request。請以 Issue 描述問題與建議，不要貼上受
-著作權保護的完整第三方內容、正式訊息、token、userId、雜湊、內部 URL 或
-production log。
+貢獻授權機制，Public Repository 接受 Issue 回報與建議，但不直接接受 Pull Request。
+請以 Issue 描述問題與建議，不要貼上受著作權保護的完整第三方內容、正式訊息、
+token、userId、雜湊、內部 URL、production URL、production log 或未獲授權的 fixture。
 
-維護者會評估 Issue 內容，並在完成程式碼審查、測試與安全檢查後安排修正。
+維護者採用的建議會由 owner 在 Private source Repository 實作。完成程式碼審查、
+測試、安全檢查與公開邊界驗證後，再重新產生並發布這個 source-available 公開版本。
+請勿直接修改由此流程產生的 Public Repository；只有 owner 另行邀請時才提供修改內容。
+Dependency 升級與安全修正也遵循相同流程，不會直接合併 Public bot Pull Request。
 
-## 本機檢查
+## 受邀修改時的本機檢查
 
 ```powershell
 npm ci
